@@ -1,3 +1,7 @@
+import logging
+
+logging.getLogger('tensorflow').disabled = True
+
 import keras
 from keras.layers import Conv2D, MaxPooling2D, Flatten
 from keras.layers import Input, LSTM, Embedding, Dense
@@ -14,8 +18,21 @@ import fire
 import pickle
 import cv2
 import os
-from  sklearn.preprocessing import LabelBinarizer
-from sklearn.model_selection import GroupShuffleSplit
+from  sklearn.preprocessing import LabelBinarizer, MultiLabelBinarizer
+from sklearn.model_selection import train_test_split, KFold
+from itertools import chain
+
+raw_dir = 'VQADatasetA_20180815'
+raw_meta_train_path = raw_dir + '/train.txt'  # cleaned
+raw_meta_test_path = raw_dir + '/test.txt'
+raw_train_video_path = raw_dir + '/train'
+raw_test_video_path = raw_dir + '/test'
+raw_dev_path = raw_dir + '/dev.txt'
+raw_val_path = raw_dir + '/val.txt'
+column_vid = 'video_id'
+mongo_url = '114.212.84.12:27017'
+mongo_db = 'MY_DB'
+output_dir = 'out'
 
 
 def v2p(path='VQADatasetA_20180815/test/', pic_dir='test_pic'
@@ -51,42 +68,150 @@ def v2p(path='VQADatasetA_20180815/test/', pic_dir='test_pic'
         vc.release()
 
 
-def separate_q(path='VQADatasetA_20180815/', pic_dir_train='train_pic', pic_dir_test='test_pic',
-               meta_train='train.txt', meta_test='test.txt'
-               ):
-    separate_q_single(path, pic_dir_train, meta_train)
-    separate_q_single(path, pic_dir_test, meta_test)
+class RawDataSet:
+    def __init__(self, data_path=raw_val_path, num_question=5, num_answer=3):
+        self.num_answer = num_answer
+        self.num_question = num_question
+        if isinstance(data_path, str):
+            self.data = pd.read_csv(data_path, header=None)
+        else:
+            assert isinstance(data_path, pd.DataFrame)  # loading from data frame
+            self.data = data_path  #
+        line1 = self.data.iloc[0]
+        assert len(line1) == num_question * (num_answer + 1) + 1
+        assert not self.data.isnull().values.any()
+
+    def gen_answers(self, answer_type='oracle'):
+        answers = []
+        assert answer_type in ['oracle', 'dummy']
+        for _, line in self.data.iterrows():
+            answer = [line[0]]
+            for i in range(self.num_question):
+                answer.append(line[1 + i * (self.num_answer + 1)])
+                if answer_type == 'oracle':
+                    answer.append(line[2 + i * (self.num_answer + 1)])
+                else:
+                    answer.append('idontknow')
+            answers.append(answer)
+        df = pd.DataFrame(answers)
+        df.to_csv(raw_dir + '/' + answer_type + '.txt', index=False, header=None,
+                  encoding='utf-8')
+
+    def get_num_questions_total(self):
+        return len(self.data) * self.num_question
+
+    def iter_vqa_line(self, yield_vid=True, yield_question=True, yield_answer=True):
+        for _, line in self.data.iterrows():
+            vid = line[0]
+            for i in range(self.num_question):
+                q = (line[1 + i * (self.num_answer + 1)])
+                a = line[2 + i * (self.num_answer + 1):2 + (i + 1) * (self.num_answer + 1) - 1].tolist()
+                things_to_iter = []
+                if yield_vid:
+                    things_to_iter.append(vid)
+                if yield_question:
+                    things_to_iter.append(q)
+                if yield_answer:
+                    things_to_iter.append(a)
+                if len(things_to_iter) > 1:
+                    yield tuple(things_to_iter)
+                else:
+                    yield things_to_iter[0]
+
+    def iter_vqa_pair(self, yield_vid=False, yield_question=False, yield_answers=True):
+        for answers_may_be_with_vid_q in self.iter_vqa_line(yield_vid=yield_vid, yield_question=yield_question,
+                                                            yield_answer=yield_answers):
+            if isinstance(answers_may_be_with_vid_q, tuple):
+                answer_list = answers_may_be_with_vid_q[-1]
+                others_to_yield = answers_may_be_with_vid_q[:-1]
+            else:
+                answer_list = answers_may_be_with_vid_q
+                others_to_yield = []
+            for a in answer_list:
+                if len(others_to_yield) > 0:
+                    yield tuple(others_to_yield + (a,))
+                else:
+                    yield a
+
+    def eval_answers(self, raw_ds):
+        assert self.num_answer == 1
+        assert self.get_num_questions_total() == raw_ds.get_num_questions_total()
+        num_total = self.get_num_questions_total()
+        num_acc = 0
+        for (vid1, q1, a), (vid2, q2, a2) in zip(self.iter_vqa_line(),
+                                                 raw_ds.iter_vqa_line()):
+            assert vid1 == vid2
+            assert q1 == q2
+            assert len(a) == 1
+            if a[0] in a2:
+                num_acc += 1
+        return num_acc / num_total
+
+    def split_dev_val(self, val_size=0.1, seed=123):
+        data_dev, data_val = train_test_split(self.data, test_size=val_size, random_state=seed)
+        return RawDataSet(data_dev, self.num_question, self.num_answer), RawDataSet(data_val, self.num_question,
+                                                                                    self.num_answer)
+
+    def split_dev_val_iter(self, val_size=0.1, seed=123, num_repeat=1):
+        for i in range(num_repeat):
+            yield self.split_dev_val(val_size, seed + i)
+
+    def cv_iter(self, num_repeat=10, seed=123):
+        kfold = KFold(num_repeat, shuffle=True, random_state=seed)
+        for tr_index, te_index in kfold.split(self.data):
+            data_tr = self.data[tr_index]
+            data_te = self.data[te_index]
+            yield RawDataSet(data_tr, self.num_question, self.num_answer), RawDataSet(data_te, self.num_question,
+                                                                                      self.num_answer)
+
+    def shuffle(self, seed=123):
+        self.data = self.data.sample(frac=1.0, random_state=seed).reset_index(drop=True)
 
 
-def separate_q_single(path='VQADatasetA_20180815/', pic_dir='train_pic', meta_path='train.csv',
-                      output_dir='input'):
-    meta_train = pd.read_csv(path + meta_path, header=None)
-    if not os.path.exists(output_dir):
-        os.mkdir(output_dir)
-    # generate new meta data in format: image_dir, question, answer
-    # multi_label?
-    new_meta_datas = []
-    for i in range(len(meta_train)):
-        video_id, q1, a11, a12, a13, q2, a21, a22, a23, q3, a31, a32, a33, q4, a41, a42, a43, q5, a51, a52, a53 = \
-            meta_train.loc[i]
-        # image_dir_i = os.path.join(pic_dir, video_id)
-        qlist = [q1, q2, q3, q4, q5]
-        answers = [a11, a12, a13, a21, a22, a23, a31, a32, a33, a41, a42, a43, a51, a52, a53]
-        for qid, q in enumerate(qlist):
-            if len(q.split()) <= 3:
-                print(video_id, q)
-            for j in range(3):
-                a = answers[qid * 3 + j]
-                if not (a == '0' or a == 0 or len(a.split()) < 5):
-                    print(video_id, a)
+def dev_val_split_raw(data_path=raw_meta_train_path, val_size=0.1, dev_path=raw_dev_path,
+                      val_path=raw_val_path, seed=233):
+    """
+    split raw meta data into dev set and val set
+    :return:
+    """
+    data = pd.read_csv(data_path, header=None)
+    data_dev, data_val = train_test_split(data, test_size=val_size, random_state=seed)
+    data_dev.to_csv(dev_path, index=False, header=None, encoding='utf-8')
+    data_val.to_csv(val_path, index=False, header=None, encoding='utf-8')
 
-                new_meta_datas.append([video_id, q, a])
 
-    df = pd.DataFrame(new_meta_datas, columns=['video_id', 'question', 'answer'])
-    df = df.drop_duplicates()
-    # df = shuffle(df)
-    df = df.reset_index(drop=True)
-    df.to_csv(os.path.join(output_dir, meta_path), index=False, encoding='utf-8')
+def eval_submits(prediction_path, target_path=raw_val_path):
+    try:
+        return prediction_path.eval_answers(target_path)
+    except:
+        p = RawDataSet(prediction_path, num_answer=1)
+        t = RawDataSet(target_path)
+        return p.eval_answers(t)
+
+
+def count_freq(sent_list):
+    answer_map = {}
+    num = 0
+    # create answers list
+    for e in sent_list:
+        num += 1
+        if e in answer_map:
+            answer_map[e] = answer_map[e] + 1
+        else:
+            answer_map[e] = 1
+    return answer_map, num
+
+
+def report_freq(sent_list):
+    answer_map, num = count_freq(sent_list)
+    sorted_x = sorted(answer_map.items(), key=operator.itemgetter(1), reverse=True)
+    print(sorted_x[:200])
+    count = 0
+    for i in range(1, 1001):
+
+        count += sorted_x[i - 1][1]
+        if i % 100 == 0:
+            print(i, count / num)
 
 
 def report_len(sent_list):
@@ -96,40 +221,15 @@ def report_len(sent_list):
     print(np.histogram(lens))
 
 
-def count_freq(sent_list):
-    answer_map = {}
-
-    # create answers list
-    for e in sent_list:
-        if e in answer_map:
-            answer_map[e] = answer_map[e] + 1
-        else:
-            answer_map[e] = 1
-    return answer_map
-
-
-def report_freq(sent_list):
-    answer_map = count_freq(sent_list)
-    sorted_x = sorted(answer_map.items(), key=operator.itemgetter(1), reverse=True)
-    print(sorted_x[:200])
-    count = 0
-    for i in range(1000):
-        count += sorted_x[i][1]
-    print(count / len(sent_list))
-
-
-def stats(train_path='input/train.txt', test_path='input/test.txt'):
-    df_tr = pd.read_csv(train_path)
-    df_te = pd.read_csv(test_path)
-    question_tr = df_tr['question']
-    answer_tr = df_tr['answer']
-    question_te = df_te['question']
+def stats(train_path=raw_meta_train_path, test_path=raw_meta_test_path):
+    ds_tr = RawDataSet(train_path)
+    ds_te = RawDataSet(test_path)
     print('len train')
-    report_len(question_tr.tolist())
+    report_len(ds_tr.iter_vqa_line(yield_vid=False, yield_answer=False))
     print('len test')
-    report_len(question_te.tolist())
+    report_len(ds_te.iter_vqa_line(yield_vid=False, yield_answer=False))
     print('freq answer')
-    report_freq(answer_tr.tolist())
+    report_freq(ds_tr.iter_vqa_pair())
 
 
 def load(filename):
@@ -150,25 +250,13 @@ def save(obj, filename, save_npy=True):
             pickle.dump(obj, file=f, protocol=0)
 
 
-def filter_answer(num_answerable=1000, input_path='input/train.txt', output_path='input/train_c.txt'):
-    df = pd.read_csv(input_path)
-    answers = df['answer']
-    answer_map = count_freq(answers)
-    sorted_answer = sorted(answer_map.items(), key=operator.itemgetter(1), reverse=True)
-    sorted_answer = sorted_answer[:num_answerable]
-    answerable_list = pd.Series(list(a[0] for a in sorted_answer))
-    answers_selected_index = answers.isin(answerable_list)
-    df_new = df[answers_selected_index].reset_index(drop=True)
-    df_new.to_csv(output_path, index=False, encoding='utf-8')
+def fit_tokenizer(train_path=raw_meta_train_path, test_path=raw_meta_test_path, output_path='input/tok.pkl'):
+    ds_tr = RawDataSet(train_path)
+    ds_te = RawDataSet(test_path)
 
-
-def fit_tokenizer(train_path='input/train.txt', test_path='input/test.txt', output_path='input/tok.pkl'):
-    df_tr = pd.read_csv(train_path)
-    df_te = pd.read_csv(test_path)
-    question_tr = df_tr['question']
-    answer_tr = df_tr['answer']
-    question_te = df_te['question']
-    texts = question_tr.tolist() + question_te.tolist() + answer_tr.tolist()
+    texts = chain(ds_tr.iter_vqa_line(yield_vid=False, yield_answer=False),
+                  ds_te.iter_vqa_line(yield_vid=False, yield_answer=False),
+                  ds_tr.iter_vqa_pair())
     tok = Tokenizer()
     tok.fit_on_texts(texts)
     save(tok, output_path)
@@ -224,72 +312,72 @@ def embedding2numpy(embedding_path='input/glove.840B.300d.txt', tok_path='input/
     save(embedding_matrix, output_path, save_npy=True)
 
 
-def fit_onehot(train_path='input/train_c.txt', output_path='input/label_encoder.pkl'):
-    df_tr = pd.read_csv(train_path)
-    answer_tr = df_tr['answer']
-    le = LabelBinarizer()
+def fit_encoder(train_path=raw_meta_train_path, output_path='input/label_encoder.pkl', num_class=1000,
+                multi_label=True, unknown_answer='idontknow'):
+    df_tr = RawDataSet(train_path)
+    if multi_label:
+        answer_tr = df_tr.iter_vqa_line(yield_vid=False, yield_question=False)
+    else:
+        answer_tr = df_tr.iter_vqa_pair()
+    le = AnswerEncoder(num_class, multi_label, unknown_answer)
     le.fit(answer_tr)
-    assert len(le.classes_) == 1000
     save(le, output_path)
 
 
-def split_dev_val(data_path='input/train_c.txt', dev_path='input/dev.txt', val_path='input/val.txt'):
-    data = pd.read_csv(data_path)
-    gs=GroupShuffleSplit(n_splits=1,test_size=0.1,random_state=233)
-    dev_vid, val_vid = next(gs.split(data,groups=data['video_id']))
-    data_dev = data.iloc[dev_vid]
-    data_val = data.iloc[val_vid]
-    data_dev.to_csv(dev_path, index=False, encoding='utf-8')
-    data_val.to_csv(val_path,  index=False, encoding='utf-8')
+class AnswerEncoder:
+    def __init__(self, num_class=1000, multi_label=False, unknown_answer='idontknow'):
+        self.unknown_answer = unknown_answer
+        self.num_class = num_class
+        self.multi_label = multi_label
+        self.classes_ = None
+        self.encoder = None
 
+    def fit(self, answers):
+        # TODO support multi-label
+        answer_map, num = count_freq(answers)
+        answer_freq = sorted(answer_map.items(), key=operator.itemgetter(1), reverse=True)
+        kept_answers = (list(answer_freq_pair[0] for answer_freq_pair in answer_freq[:self.num_class]))
+        if self.unknown_answer == 'most_freq':
+            self.unknown_answer = answer_freq[self.num_class][0]
+        if self.multi_label:
+            self.classes_ = kept_answers
+            self.encoder = MultiLabelBinarizer().fit(self.classes_)
+        else:
+            self.classes_ = kept_answers + [self.unknown_answer]
+            self.encoder = LabelBinarizer().fit(self.classes_)
+        return self
 
-def pipline():
-    separate_q()
-    stats()
-    fit_onehot()
-    fit_tokenizer()
-    filter_answer()
-    embedding2numpy()
+    def transform(self, answers):
+        # TODO efficient transform
+        if self.multi_label:
+            cleared_answers = []
+            for as_list in answers:
+                new_as = []
+                for a in as_list:
+                    if a in self.classes_:
+                        new_as.append(a)
+                cleared_answers.append(new_as)
+        else:
+            cleared_answers = []
+            for answer in answers:
+                if answer in self.classes_:
+                    cleared_answers.append(answer)
+                else:
+                    cleared_answers.append(self.unknown_answer)
+        return self.encoder.transform(cleared_answers)
+
+    def inverse_transform(self, answers):
+        # TODO efficient inverse_transform
+        if not self.multi_label:
+            return self.encoder.inverse_transform(answers)
+        else:
+            # get one most possible label
+            t = np.zeros_like(answers)
+            gold_answer_index = np.argmax(answers, axis=1)
+            t[np.arange(len(answers)), gold_answer_index] = 1
+            results = self.encoder.inverse_transform(t)
+            return list(result[0] for result in results)
 
 
 if __name__ == '__main__':
     fire.Fire()
-"""len train (array([   20,   562,  5723, 12841,  3931,  5405,  2212,   307,    63, 7]), array([ 1. ,  2.8,  4.6,  
-6.4,  8.2, 10. , 11.8, 13.6, 15.4, 17.2, 19. ])) 
-len test (array([ 100,  362,  923,  913, 1264,  271,  283,   32,   
-17,    5]), array([ 3. ,  4.5,  6. ,  7.5,  9. , 10.5, 12. , 13.5, 15. , 16.5, 18. ])) 
-freq answer 
-[('standing', 
-2128), ('indoor', 982), ('black', 871), ('sitting', 823), ('white', 780), ('blue', 639), ('in house', 441), ('red', 
-411), ('residence', 383), ('drinking water', 277), ('green', 260), ('chair', 249), ('cup', 239), ('clothes', 231), 
-('yellow', 230), ('table', 217), ('kitchen', 198), ('living room', 197), ('eating', 196), ('computer', 184), 
-('dark blue', 177), ('grey', 174), ('on table', 168), ('book', 161), ('milk white', 153), ('in living room', 148), 
-('creamy white', 147), ('gray', 145), ('talking', 143), ('bedroom', 142), ('purple', 140), ('speaking', 134), 
-('brown', 131), ('pink', 121), ('walking', 120), ('inside house', 114), ('glasses', 113), ('in bedroom', 112), 
-('pillow', 112), ('pot', 107), ('light blue', 99), ('in kitchen', 99), ('hat', 99), ('in room', 98), ('mirror', 96), 
-('short hair', 96), ('bottle', 96), ('desk', 94), ('opening door', 92), ('sneezing', 92), ('sofa', 91), ('indoors', 
-90), ('bright red', 90), ('cabinet', 90), ('aterrimus', 89), ('tidying', 87), ('lying', 86), ('phone', 85), ('bed', 
-83), ('in door', 81), ('long hair', 78), ('playing cell phone', 77), ('chatting', 76), ('outdoor', 75), ('house', 
-74), ('furvous', 72), ('orange', 72), ('dark black', 70), ('watching tv', 66), ('closet', 66), ('playing computer', 
-66), ('cell phone', 66), ('dark grey', 65), ('resting', 65), ('on wall', 64), ('on ground', 64), ('plate', 63), 
-('refrigerator', 62), ('cooking', 62), ('two', 62), ('dark red', 61), ('dark green', 61), ('closing door', 60), 
-('room', 60), ('man', 58), ('taking off clothes', 58), ('playing phone', 57), ('dancing', 56), ('singing', 56), 
-('light gray', 56), ('running', 55), ('clearing up', 54), ('shoes', 53), ('car', 53), ('on stairs', 53), ('towel', 
-52), ('light grey', 52), ('off-white', 52), ('door', 50), ('crimson', 50), ('bag', 50), ('sleeping', 49), 
-('light green', 49), ('tv', 49), ('male', 48), ('blanket', 47), ('box', 46), ('shelf', 42), ('microphone', 42), 
-('laptop', 42), ('sky blue', 42), ('grass green', 42), ('painting', 41), ('looking into mirror', 41), ('taking off 
-shoes', 41), ('pure black', 41), ('mouse', 41), ('dark brown', 40), ('tree', 40), ('bowl', 40), ('sweeping floor', 
-40), ('pouring water', 39), ('woman', 39), ('reading book', 39), ('opening refrigerator', 38), ('lamp', 38), 
-('reading', 38), ('writing', 38), ('on sofa', 38), ('paper', 37), ('light yellow', 37), ('violet', 37), ('dark-blue', 
-37), ('taking things', 37), ('dog', 37), ('on bed', 37), ('bathroom', 36), ('milky white', 36), ('pool', 35), 
-('curtain', 35), ('dark gray', 34), ('washing machine', 34), ('carton', 34), ('navy blue', 33), ('television', 33), 
-('in car', 33), ('beige', 33), ('royal blue', 32), ('taking clothes', 32), ('toilet', 32), ('corridor', 31), 
-('looking at computer', 31), ('looking in mirror', 31), ('cyan', 31), ('eating bread', 30), ('switch', 30), ('quilt', 
-30), ('stairs', 30), ('eating things', 30), ('performing', 30), ('azure', 30), ('on stage', 30), ('photo frame', 30), 
-('photo', 29), ('light-blue', 29), ('playing games', 29), ('rose red', 29), ('three', 29), ('water cup', 29), 
-('people', 29), ('gray white', 28), ('english', 28), ('broom', 28), ('on desk', 28), ('bucket', 28), ('guitar', 27), 
-('mustache', 27), ('playing mobile phone', 26), ('female', 26), ('food', 26), ('light red', 26), ('cleaning', 26), 
-('reading books', 25), ('cleaning up', 25), ('beige white', 25), ('yes', 25), ('taking cup', 25), ('putting on 
-clothes', 25), ('dark purple', 25), ('left hand', 25), ('carpet', 25), ('lying down', 25), ('in bathroom', 25), 
-('driving', 24), ('smalt', 24), ('on chair', 24), ('window', 24), ('public place', 23), ('on floor', 23), ('hearth', 
-23)] """

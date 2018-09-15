@@ -1,26 +1,12 @@
-from keras.utils import Sequence
-import pandas as pd
-from utils import load
-from keras.preprocessing.text import Tokenizer
-from keras.preprocessing.sequence import pad_sequences
-from sklearn.preprocessing import LabelEncoder
-import numpy as np
-from keras.callbacks import Callback
-from sklearn.utils import shuffle
 import h5py
+import numpy as np
+import pandas as pd
+from keras.callbacks import Callback
+from keras.preprocessing.sequence import pad_sequences
+from keras.utils import Sequence
+from sklearn.utils import shuffle
 
-
-class CommonSequence:
-    def __init__(self, x, batch_size):
-        self.x1 = x
-        self.batch_size = batch_size
-
-    def __len__(self):
-        return int(np.ceil(self.x1.shape[0] / float(self.batch_size)))
-
-    def __getitem__(self, idx):
-        batch_x1 = self.x1[idx * self.batch_size:(idx + 1) * self.batch_size]
-        return batch_x1
+from utils import load, RawDataSet
 
 
 class ResetCallBack(Callback):
@@ -32,11 +18,11 @@ class ResetCallBack(Callback):
         self.seq.reset()
 
 
-class VQASequence(Sequence):
-    def __init__(self, meta_data_path='input/train_c.txt',
+class VQADataSet(Sequence):
+    def __init__(self, raw_ds,
                  tok_path='input/tok.pkl', label_encoder_path='input/label_encoder.pkl',
-                 feature_path='output_tr.h5',
-                 batch_size=128, is_test=False, len_q=15, len_video=10, seed=123,
+                 feature_path='output_tr.h5', multi_label=False, is_test=False,
+                 batch_size=128, len_q=15, len_video=10, seed=123, num_class=1000,
                  frame_aggregate_strategy='average',
                  shuffle_data=True):
         self.len_video = len_video
@@ -46,16 +32,33 @@ class VQASequence(Sequence):
         self.len_q = len_q
         self.tok = load(tok_path)
         self.label_encoder = load(label_encoder_path)
+        if multi_label:
+            assert len(self.label_encoder.classes_) == num_class
+        else:
+            assert len(self.label_encoder.classes_) == num_class + 1
         self.num_target = len(self.label_encoder.classes_)
-        meta_data = pd.read_csv(meta_data_path)
+        meta_data = raw_ds
         if shuffle_data:
-            meta_data = shuffle(meta_data, random_state=seed).reset_index()
-        self.questions_raw = meta_data['question']
+            meta_data.shuffle()
+        if multi_label:
+            new_data = pd.DataFrame(meta_data.iter_vqa_line(), columns=['video_id', 'question', 'answer'])
+        else:
+            new_data = pd.DataFrame(meta_data.iter_vqa_pair(yield_vid=True, yield_question=True),
+                                    columns=['video_id', 'question', 'answer'])
+            if is_test:
+                subsets = ['question', 'video_id']
+            else:
+                subsets = ['question', 'video_id', 'answer']
+            new_data = new_data.drop_duplicates(subset=subsets).reset_index(drop=True)
+        self.raw_data = meta_data
+        self.indices = np.arange(new_data.shape[0])
+
+        self.questions_raw = new_data['question']
         question_series = self.tok.texts_to_sequences(self.questions_raw)
         self.questions = pad_sequences(question_series, maxlen=len_q)
-        video_ids = meta_data['video_id']
+        video_ids = new_data['video_id']
         if not is_test:
-            answer_series = meta_data['answer']
+            answer_series = new_data['answer']
             self.answers = self.label_encoder.transform(answer_series)
             self.video_ids = None
         else:
@@ -87,10 +90,12 @@ class VQASequence(Sequence):
         return zeros
 
     def __getitem__(self, idx):
-        batch_img_feature = self.img_feature[idx * self.batch_size:(idx + 1) * self.batch_size]
-        batch_sen_seq = self.questions[idx * self.batch_size:(idx + 1) * self.batch_size]
+        inds = self.indices[idx * self.batch_size:(idx + 1) * self.batch_size]
+
+        batch_img_feature = self.img_feature[inds]
+        batch_sen_seq = self.questions[inds]
         if not self.is_test:
-            batch_answer = self.answers[idx * self.batch_size:(idx + 1) * self.batch_size]
+            batch_answer = self.answers[inds]
             return [batch_img_feature, batch_sen_seq], batch_answer
         else:
             return [batch_img_feature, batch_sen_seq]
@@ -99,26 +104,27 @@ class VQASequence(Sequence):
         return int(np.ceil(len(self.img_feature) / float(self.batch_size)))
 
     def reset(self):
-        self.answers = shuffle(self.answers, random_state=self.seed)
-        self.questions = shuffle(self.questions, random_state=self.seed)
-        self.img_feature = shuffle(self.img_feature, random_state=self.seed)
+        np.random.shuffle(self.indices)
 
-    def create_submit(self, predictions):
+    def eval_or_submit(self, predictions, output_path=None):
         assert self.is_test
+        num_question = self.raw_data.num_question
         predictions = self.label_encoder.inverse_transform(predictions)
-        assert len(predictions) % 5 == 0
+        assert len(predictions) % num_question == 0
+        # TODO handle submit in multi label case
         data_to_submit = []
-        for i in range(0, len(predictions), 5):
+        for i in range(0, len(predictions), num_question):
             vid = self.video_ids[i]
-            q1 = self.questions_raw[i]
-            q2 = self.questions_raw[i + 1]
-            q3 = self.questions_raw[i + 2]
-            q4 = self.questions_raw[i + 3]
-            q5 = self.questions_raw[i + 4]
-            p1 = predictions[i]
-            p2 = predictions[i + 1]
-            p3 = predictions[i + 2]
-            p4 = predictions[i + 3]
-            p5 = predictions[i + 4]
-            data_to_submit.append([vid, q1, p1, q2, p2, q3, p3, q4, p4, q5, p5])
-        return data_to_submit
+            data_to_submit_i = [vid]
+            for j in range(num_question):
+                qj = self.questions_raw[i + j]
+                pj = predictions[i + j]
+                data_to_submit_i.append(qj)
+                data_to_submit_i.append(pj)
+            data_to_submit.append(data_to_submit_i)
+        df = pd.DataFrame(data_to_submit)
+        if output_path is not None:
+            df.to_csv(output_path, header=None, index=False, encoding='utf-8')
+            return df
+        else:
+            return RawDataSet(df, num_answer=1).eval_answers(self.raw_data)

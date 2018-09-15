@@ -39,6 +39,8 @@
 4. [视频动作分类](https://github.com/kenshohara/video-classification-3d-cnn-pytorch)
 
 ## TODO
--[ ] 迁移到sacred框架
+-[x] 迁移到sacred框架
+-[ ] 为mongodb数据库添加加密，用mongodb管理artifacts
 -[ ] 添加tensorboard输出
--[ ] 
+-[ ] 模拟云端的性能估计
+-[ ] 尝试不同的问题建模
