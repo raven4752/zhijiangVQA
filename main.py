@@ -1,3 +1,4 @@
+#!/usr/bin/python
 from utils import *
 import sacred
 from sacred.observers import MongoObserver
