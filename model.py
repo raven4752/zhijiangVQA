@@ -98,8 +98,11 @@ def get_baseline_model(vqa_tr):
     # feature = concatenate(
     #    [feature_image, feature_q, multiply([feature_image, feature_q]), subtract([feature_image, feature_q])])
     # feature = Dropout(0.5)(feature)
-
-    out = Dense(vqa_tr.num_target, activation='softmax')(feature)
+    if vqa_tr.multi_label:
+        activation = 'sigmoid'
+    else:
+        activation = 'softmax'
+    out = Dense(vqa_tr.num_target, activation=activation)(feature)
     model = Model(inputs=[input_image, input_question], outputs=out)
     model.compile('adam', loss=categorical_crossentropy)
     model.summary()

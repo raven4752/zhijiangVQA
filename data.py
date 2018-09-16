@@ -32,6 +32,7 @@ class VQADataSet(Sequence):
         self.len_q = len_q
         self.tok = load(tok_path)
         self.label_encoder = load(label_encoder_path)
+        self.multi_label=multi_label
         if multi_label:
             assert len(self.label_encoder.classes_) == num_class
         else:

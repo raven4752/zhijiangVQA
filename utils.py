@@ -315,10 +315,7 @@ def embedding2numpy(embedding_path='input/glove.840B.300d.txt', tok_path='input/
 def fit_encoder(train_path=raw_meta_train_path, output_path='input/label_encoder.pkl', num_class=1000,
                 multi_label=True, unknown_answer='idontknow'):
     df_tr = RawDataSet(train_path)
-    if multi_label:
-        answer_tr = df_tr.iter_vqa_line(yield_vid=False, yield_question=False)
-    else:
-        answer_tr = df_tr.iter_vqa_pair()
+    answer_tr = df_tr.iter_vqa_pair()
     le = AnswerEncoder(num_class, multi_label, unknown_answer)
     le.fit(answer_tr)
     save(le, output_path)
@@ -341,7 +338,7 @@ class AnswerEncoder:
             self.unknown_answer = answer_freq[self.num_class][0]
         if self.multi_label:
             self.classes_ = kept_answers
-            self.encoder = MultiLabelBinarizer().fit(self.classes_)
+            self.encoder = MultiLabelBinarizer(classes=self.classes_).fit([self.classes_])
         else:
             self.classes_ = kept_answers + [self.unknown_answer]
             self.encoder = LabelBinarizer().fit(self.classes_)

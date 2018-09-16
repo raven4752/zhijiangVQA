@@ -11,6 +11,7 @@ import datetime
 from model import ResetCallBack
 import tensorflow as tf
 from keras.backend.tensorflow_backend import set_session
+from tensorflow import set_random_seed
 
 ex = Experiment('vqa')
 ex.observers.append(MongoObserver.create(url=mongo_url,
@@ -21,23 +22,26 @@ ex.observers.append(MongoObserver.create(url=mongo_url,
 def cfg():
     protocol = 'val'
     num_repeat = 1
-    multi_label = False
+    multi_label = True
     num_class = 1000  # num of candidate answers
     len_q = 15  # length of question
     batch_size = 128
     test_batch_size = 1024
-    epochs = 1
+    epochs = 20
     seed = 123
     output_dir = 'out'
+    label_encoder_path = 'input/label_encoder_multi_'+str(num_class)+'.pkl'
 
 
 @ex.automain
-def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_batch_size, epochs, seed, output_dir):
+def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_batch_size, epochs, seed, output_dir,
+        label_encoder_path):
     assert protocol in ['val', 'cv', 'submit']
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     set_session(tf.Session(config=config))
     np.random.seed(seed)
+    set_random_seed(seed+2)
     raw_ds_tr = RawDataSet(data_path=raw_meta_train_path)
     results = []
     output_path = None
@@ -63,10 +67,10 @@ def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_ba
         valid_iter = raw_ds_tr.cv_iter(seed=seed, num_repeat=num_repeat)
     for raw_ds_tr, raw_ds_te in valid_iter:
         ds_tr = VQADataSet(raw_ds_tr, multi_label=multi_label, len_q=len_q, num_class=num_class,
-                           batch_size=batch_size, feature_path=train_resource_path)
+                           batch_size=batch_size, feature_path=train_resource_path,label_encoder_path=label_encoder_path)
         ds_te = VQADataSet(raw_ds_te, multi_label=multi_label, len_q=len_q, num_class=num_class,
                            batch_size=test_batch_size, is_test=True, shuffle_data=False,
-                           feature_path=test_resource_path)
+                           feature_path=test_resource_path,label_encoder_path=label_encoder_path)
         model = get_baseline_model(ds_tr)
         model.fit_generator(ds_tr, epochs=epochs, callbacks=[ResetCallBack(ds_tr)])
         p_te = model.predict_generator(ds_te)
