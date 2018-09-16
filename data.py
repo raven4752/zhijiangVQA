@@ -33,6 +33,7 @@ class VQADataSet(Sequence):
         self.tok = load(tok_path)
         self.label_encoder = load(label_encoder_path)
         self.multi_label = multi_label
+        self.shuffle_data = shuffle_data
         if multi_label:
             assert len(self.label_encoder.classes_) == num_class
         else:
@@ -53,36 +54,73 @@ class VQADataSet(Sequence):
             new_data = new_data.drop_duplicates(subset=subsets).reset_index(drop=True)
         self.raw_data = meta_data
         self.indices = np.arange(new_data.shape[0])
-
+        # save to evaluate results
         self.questions_raw = new_data['question']
+        self.video_ids = new_data['video_id']
+
         question_series = self.tok.texts_to_sequences(self.questions_raw)
         self.questions = pad_sequences(question_series, maxlen=len_q)
-        video_ids = new_data['video_id']
         if not is_test:
             answer_series = new_data['answer']
             self.answers = self.label_encoder.transform(answer_series)
-            self.video_ids = None
         else:
             self.answers = None
-            self.video_ids = video_ids
-        assert frame_aggregate_strategy in ['average', 'no_aggregation']
+        assert frame_aggregate_strategy in ['average', 'no_aggregation', 'multi_instance']
         self.frame_aggregate_strategy = frame_aggregate_strategy
         if frame_aggregate_strategy == 'average':
             self.img_feature = []
 
             with h5py.File(feature_path, 'r') as hf:
-                for vid in video_ids:
+                for vid in self.video_ids:  # each vid is duplicated #num_question times
+                    # TODO effieicent resource loading
                     self.img_feature_shape = (hf[vid][:].shape[-1],)
                     self.img_feature.append(np.mean(hf[vid][:], axis=0, keepdims=True))
             self.img_feature = np.concatenate(self.img_feature, axis=0)
-        else:
+        elif frame_aggregate_strategy == 'no_aggregation':
             self.img_feature = []
 
             with h5py.File(feature_path, 'r') as hf:
-                for vid in video_ids:
+                for vid in self.video_ids:
                     self.img_feature_shape = (self.len_video, hf[vid][:].shape[-1])
                     self.img_feature.append(np.expand_dims(self.pad_video(hf[vid][:]), axis=0))
             self.img_feature = np.concatenate(self.img_feature, axis=0)
+        else:
+            assert frame_aggregate_strategy == 'multi_instance'
+            # split each video into several smaller videos with same label
+            questions = self.questions
+            answers = self.answers
+            self.img_feature = []
+            len_sub_instances = []
+            with h5py.File(feature_path, 'r') as hf:
+                for vid in self.video_ids:
+                    video_feature = hf[vid][:]
+                    assert len(video_feature.shape) == 2
+                    self.img_feature_shape = (video_feature.shape[-1],)
+                    len_sub_instances.append(video_feature.shape[0])
+                    self.img_feature.append(video_feature)
+            num_sub_instances = sum(len_sub_instances)
+            new_questions = np.empty([num_sub_instances, self.questions.shape[1]])
+            if answers is None:
+                new_answers = None
+            else:
+                new_answers = np.empty([num_sub_instances, self.answers.shape[1]])
+            self.img_feature = np.concatenate(self.img_feature, axis=0)
+            assert len(self.img_feature) == num_sub_instances
+            index_sub_i = 0
+            for i, len_sub_instance in enumerate(len_sub_instances):
+                new_questions[index_sub_i:index_sub_i + len_sub_instance] = np.repeat(
+                    np.expand_dims(questions[i], axis=0),
+                    len_sub_instance, axis=0)
+                if answers is not None:
+                    new_answers[index_sub_i:index_sub_i + len_sub_instance] = np.repeat(
+                        np.expand_dims(answers[i], axis=0),
+                        len_sub_instance, axis=0)
+                index_sub_i += len_sub_instance
+
+            self.answers = new_answers
+            self.questions = new_questions
+            self.len_sub_instances = len_sub_instances
+            self.indices = np.arange(num_sub_instances)
 
     def pad_video(self, video):
         zeros = np.zeros(self.img_feature_shape)
@@ -109,8 +147,19 @@ class VQADataSet(Sequence):
 
     def eval_or_submit(self, predictions, output_path=None):
         assert self.is_test
+        assert not self.shuffle_data
         num_question = self.raw_data.num_question
-        predictions = self.label_encoder.inverse_transform(predictions)
+        if self.frame_aggregate_strategy == 'multi_instance':
+            # turn predictions of sub instances into predictions of instances
+            new_predictions = np.empty([len(self.video_ids), predictions.shape[1]])
+            index = 0
+            for i, len_sub_instance in enumerate(self.len_sub_instances):
+                predictions_sub = predictions[index:index + len_sub_instance]
+                new_predictions[i] = np.mean(predictions_sub, axis=0)
+                index += len_sub_instance
+            predictions = self.label_encoder.inverse_transform(new_predictions)
+        else:
+            predictions = self.label_encoder.inverse_transform(predictions)
         assert len(predictions) % num_question == 0
         # TODO handle submit in multi label case
         data_to_submit = []
@@ -125,8 +174,8 @@ class VQADataSet(Sequence):
             data_to_submit.append(data_to_submit_i)
         df = pd.DataFrame(data_to_submit)
         if output_path is not None:
-            df = df.sample(frac=0.05, random_state=self.seed)  # for checking
             df.to_csv(output_path, header=None, index=False, encoding='utf-8')
+            df = df.sample(frac=0.05, random_state=self.seed)  # for checking
             return df
         else:
             return RawDataSet(df, num_answer=1).eval_answers(self.raw_data)

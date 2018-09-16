@@ -28,9 +28,10 @@ def cfg():
     len_q = 15  # length of question
     batch_size = 128
     test_batch_size = 1024
-    epochs = 20
+    epochs = 1
     seed = 123
     output_dir = 'out'
+    frame_aggregate_strategy='multi_instance'
     if multi_label:
         label_encoder_path = 'input/label_encoder_multi_'+str(num_class)+'.pkl'
     else:
@@ -38,7 +39,7 @@ def cfg():
 
 @ex.automain
 def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_batch_size, epochs, seed, output_dir,
-        label_encoder_path):
+        label_encoder_path,frame_aggregate_strategy):
     assert protocol in ['val', 'cv', 'submit']
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -70,10 +71,12 @@ def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_ba
         valid_iter = raw_ds_tr.cv_iter(seed=seed, num_repeat=num_repeat)
     for raw_ds_tr, raw_ds_te in valid_iter:
         ds_tr = VQADataSet(raw_ds_tr, multi_label=multi_label, len_q=len_q, num_class=num_class,
-                           batch_size=batch_size, feature_path=train_resource_path,label_encoder_path=label_encoder_path)
+                           batch_size=batch_size, feature_path=train_resource_path,label_encoder_path=label_encoder_path,
+                           frame_aggregate_strategy=frame_aggregate_strategy)
         ds_te = VQADataSet(raw_ds_te, multi_label=multi_label, len_q=len_q, num_class=num_class,
                            batch_size=test_batch_size, is_test=True, shuffle_data=False,
-                           feature_path=test_resource_path,label_encoder_path=label_encoder_path)
+                           feature_path=test_resource_path,label_encoder_path=label_encoder_path,
+                           frame_aggregate_strategy=frame_aggregate_strategy)
         model = get_baseline_model(ds_tr)
         model.fit_generator(ds_tr, epochs=epochs, callbacks=[ResetCallBack(ds_tr)])
         p_te = model.predict_generator(ds_te)
