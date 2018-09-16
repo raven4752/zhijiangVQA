@@ -159,8 +159,8 @@ class RawDataSet:
     def cv_iter(self, num_repeat=10, seed=123):
         kfold = KFold(num_repeat, shuffle=True, random_state=seed)
         for tr_index, te_index in kfold.split(self.data):
-            data_tr = self.data[tr_index]
-            data_te = self.data[te_index]
+            data_tr = self.data.loc[tr_index]
+            data_te = self.data.loc[te_index]
             yield RawDataSet(data_tr, self.num_question, self.num_answer), RawDataSet(data_te, self.num_question,
                                                                                       self.num_answer)
 

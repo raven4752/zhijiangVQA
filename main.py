@@ -31,8 +31,10 @@ def cfg():
     epochs = 20
     seed = 123
     output_dir = 'out'
-    label_encoder_path = 'input/label_encoder_multi_'+str(num_class)+'.pkl'
-
+    if multi_label:
+        label_encoder_path = 'input/label_encoder_multi_'+str(num_class)+'.pkl'
+    else:
+        label_encoder_path = 'input/label_encoder_'+str(num_class)+'.pkl'
 
 @ex.automain
 def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_batch_size, epochs, seed, output_dir,
