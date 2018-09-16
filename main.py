@@ -36,10 +36,12 @@ def cfg():
         label_encoder_path = 'input/label_encoder_multi_'+str(num_class)+'.pkl'
     else:
         label_encoder_path = 'input/label_encoder_'+str(num_class)+'.pkl'
+    train_resource_path = 'input/vgg_10f/tr.h5'
+    test_resource_path = 'input/vgg_10f/te.h5'
 
 @ex.automain
 def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_batch_size, epochs, seed, output_dir,
-        label_encoder_path,frame_aggregate_strategy):
+        label_encoder_path,frame_aggregate_strategy,train_resource_path,test_resource_path):
     assert protocol in ['val', 'cv', 'submit']
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -51,10 +53,8 @@ def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_ba
     output_path = None
     now = datetime.datetime.now()
     cur_time = now.strftime('%m_%d_%H')
-    train_resource_path = 'input/resnext_64f/tr.h5'
     if protocol == 'submit':
         raw_ds_te = RawDataSet(data_path=raw_meta_test_path)
-        test_resource_path = 'input/resnext_64f/te.h5'
 
         def single_iter():
             yield raw_ds_tr, raw_ds_te
