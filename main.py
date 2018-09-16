@@ -59,7 +59,7 @@ def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_ba
         if not os.path.exists(output_dir):
             os.mkdir(output_dir)
         output_path = os.path.join(output_dir, cur_time + '.txt')
-        valid_iter = single_iter
+        valid_iter = single_iter()
     elif protocol == 'val':
         test_resource_path = train_resource_path
         valid_iter = raw_ds_tr.split_dev_val_iter(seed=seed, num_repeat=num_repeat)

@@ -32,7 +32,7 @@ class VQADataSet(Sequence):
         self.len_q = len_q
         self.tok = load(tok_path)
         self.label_encoder = load(label_encoder_path)
-        self.multi_label=multi_label
+        self.multi_label = multi_label
         if multi_label:
             assert len(self.label_encoder.classes_) == num_class
         else:
@@ -125,6 +125,7 @@ class VQADataSet(Sequence):
             data_to_submit.append(data_to_submit_i)
         df = pd.DataFrame(data_to_submit)
         if output_path is not None:
+            df = df.sample(frac=0.05, random_state=self.seed)  # for checking
             df.to_csv(output_path, header=None, index=False, encoding='utf-8')
             return df
         else:
