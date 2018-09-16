@@ -1,3 +1,4 @@
+#!/usr/bin/python
 import logging
 
 logging.getLogger('tensorflow').disabled = True
@@ -374,6 +375,39 @@ class AnswerEncoder:
             t[np.arange(len(answers)), gold_answer_index] = 1
             results = self.encoder.inverse_transform(t)
             return list(result[0] for result in results)
+
+
+def eval_blend(*predictions_paths):
+    # load data set
+    ds = None
+    for predictions_path in predictions_paths:
+        if ds is None:
+            ds = load(predictions_path.replace('.npy', '_ds.pkl'))
+            # TODO check predictions made on the same val set
+            break
+    assert ds is not None
+    predictions = []
+    for predictions_path in predictions_paths:
+        predictions.append(np.expand_dims(load(predictions_path), axis=0))
+    predictions = np.mean(np.concatenate(predictions, axis=0), axis=0)
+    score = ds.eval_or_submit(predictions)
+    return score
+
+
+def blend(*predictions_paths, output_path=output_dir + '/blend.txt'):
+    # load data set
+    ds = None
+    for predictions_path in predictions_paths:
+        if ds is None:
+            ds = load(predictions_path.replace('.npy', '_ds.pkl'))
+            # TODO check predictions made on the same val set
+            break
+    assert ds is not None
+    predictions = []
+    for predictions_path in predictions_paths:
+        predictions.append(np.expand_dims(load(predictions_path), axis=0))
+    predictions = np.mean(np.concatenate(predictions, axis=0), axis=0)
+    return ds.eval_or_submit(predictions, output_path=output_path)
 
 
 if __name__ == '__main__':
