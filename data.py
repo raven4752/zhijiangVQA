@@ -5,7 +5,7 @@ from keras.callbacks import Callback
 from keras.preprocessing.sequence import pad_sequences
 from keras.utils import Sequence
 from sklearn.utils import shuffle
-
+import random
 from utils import load, RawDataSet
 
 
@@ -14,7 +14,7 @@ class ResetCallBack(Callback):
         super(ResetCallBack, self).__init__()
         self.seq = seq
 
-    def on_epoch_begin(self, epoch, logs=None):
+    def on_epoch_end(self, epoch, logs=None):
         self.seq.reset()
 
 
@@ -36,6 +36,12 @@ class VQADataSet(Sequence):
         self.multi_label = multi_label
         self.shuffle_data = shuffle_data
         self.feature_path = feature_path
+        self.img_feature = None
+        self.answers = None
+        self.questions = None
+        self.len_sub_instances = None
+        self.indices = None
+        self.img_feature_shape = None
         if multi_label:
             assert len(self.label_encoder.classes_) == num_class
         else:
@@ -67,25 +73,22 @@ class VQADataSet(Sequence):
             self.answers = self.label_encoder.transform(answer_series)
         else:
             self.answers = None
-        assert frame_aggregate_strategy in ['average', 'no_aggregation', 'multi_instance', 'max']
+        assert frame_aggregate_strategy in ['average', 'no_aggregation', 'multi_instance', 'single_instance']
         self.frame_aggregate_strategy = frame_aggregate_strategy
+        self.load_resource(frame_aggregate_strategy, feature_path)
+
+    def load_resource(self, frame_aggregate_strategy, feature_path, ):
+        # TODO refactor resource loading
         if frame_aggregate_strategy == 'average':
             self.img_feature = []
 
             with h5py.File(feature_path, 'r') as hf:
-                for vid in self.video_ids:  # each vid is duplicated #num_question times
-                    # TODO effieicent resource loading
-                    self.img_feature_shape = (hf[vid][:].shape[-1],)
-                    self.img_feature.append(np.mean(hf[vid][:], axis=0, keepdims=True))
-            self.img_feature = np.concatenate(self.img_feature, axis=0)
-        elif frame_aggregate_strategy == 'max':
-            self.img_feature = []
+                for vid in self.video_ids:
+                    # TODO efficient resource loading
+                    video_feature = hf[vid][:]
 
-            with h5py.File(feature_path, 'r') as hf:
-                for vid in self.video_ids:  # each vid is duplicated #num_question times
-                    # TODO effieicent resource loading
-                    self.img_feature_shape = (hf[vid][:].shape[-1],)
-                    self.img_feature.append(np.max(hf[vid][:], axis=0, keepdims=True))
+                    self.img_feature_shape = tuple(video_feature.shape[1:])
+                    self.img_feature.append(np.mean(video_feature, axis=0, keepdims=True))
             self.img_feature = np.concatenate(self.img_feature, axis=0)
 
         elif frame_aggregate_strategy == 'no_aggregation':
@@ -93,8 +96,22 @@ class VQADataSet(Sequence):
 
             with h5py.File(feature_path, 'r') as hf:
                 for vid in self.video_ids:
-                    self.img_feature_shape = (self.len_video, hf[vid][:].shape[-1])
-                    self.img_feature.append(np.expand_dims(self.pad_video(hf[vid][:]), axis=0))
+                    video_feature = hf[vid][:]
+
+                    self.img_feature_shape = (self.len_video, tuple(video_feature.shape[1:]))
+                    self.img_feature.append(np.expand_dims(self.pad_video(video_feature), axis=0))
+            self.img_feature = np.concatenate(self.img_feature, axis=0)
+        elif frame_aggregate_strategy == 'single_instance':
+            self.img_feature = []
+
+            with h5py.File(feature_path, 'r') as hf:
+                for vid in self.video_ids:
+                    # TODO efficient resource loading
+                    video_feature = hf[vid][:]
+                    self.img_feature_shape = tuple(video_feature.shape[1:])
+                    t = random.randint(0, video_feature.shape[0] - 1)
+
+                    self.img_feature.append(np.expand_dims(video_feature[t], axis=0))
             self.img_feature = np.concatenate(self.img_feature, axis=0)
         else:
             assert frame_aggregate_strategy == 'multi_instance'
@@ -137,7 +154,7 @@ class VQADataSet(Sequence):
             self.answers = new_answers
             self.questions = new_questions
             self.len_sub_instances = len_sub_instances
-        self.indices = np.arange(self.questions.shape[0])
+        self.indices = np.arange(self.questions.shape[0], dtype=np.int32)
 
     def pad_video(self, video):
         zeros = np.zeros(self.img_feature_shape)
@@ -147,8 +164,10 @@ class VQADataSet(Sequence):
 
     def __getitem__(self, idx):
         inds = self.indices[idx * self.batch_size:(idx + 1) * self.batch_size]
-
-        batch_img_feature = self.img_feature[inds]
+        try:
+            batch_img_feature = self.img_feature[inds]
+        except:
+            print('fk')
         batch_sen_seq = self.questions[inds]
 
         if not self.is_test:
@@ -161,6 +180,9 @@ class VQADataSet(Sequence):
         return int(np.ceil(len(self.img_feature) / float(self.batch_size)))
 
     def reset(self):
+        # TODO fix bugs of dynamic resource loading
+        # if self.frame_aggregate_strategy == 'single_instance':
+        #    self.load_resource(self.frame_aggregate_strategy, self.feature_path)
         np.random.shuffle(self.indices)
 
     def eval_or_submit(self, predictions, output_path=None):

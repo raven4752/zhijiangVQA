@@ -141,7 +141,7 @@ def get_bottom_up_attention_model(vqa_tr, num_dense_image=128):
     embed1c = Embedding(embedding.shape[0], embedding.shape[1], weights=[embedding],
                         trainable=False, input_shape=shape_question)
     feature_q = embed1c(input_question)
-    feature_q = SpatialDropout1D(0.1)(feature_q)
+    feature_q = SpatialDropout1D(0.2)(feature_q)
     feature_q = Bidirectional(CuDNNLSTM(num_rnn_unit))(
         feature_q)
     # feature_q = Dropout(0.5)(feature_q)
