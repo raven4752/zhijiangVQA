@@ -155,7 +155,7 @@ def get_bottom_up_attention_model(vqa_tr, num_dense_image=128):
     #feature_q_r = SpatialDropout1D(0.5)(feature_q_r)
     feature_merge = concatenate([feature_q_r, feature_image], axis=-1)
     feature_merge_att = KVAttention(shape_image[0])([feature_merge, feature_image])
-    feature_merge_att = Dropout(0.5)(feature_merge_att)
+    #feature_merge_att = Dropout(0.5)(feature_merge_att)
     feature_image_t = Dense(num_dense_image, activation='tanh')(feature_merge_att)
     # gate_image = Dense(num_dense_image, activation='sigmoid')(feature_image)
     # feature_image = multiply([feature_image_t, gate_image])
