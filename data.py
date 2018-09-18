@@ -14,7 +14,7 @@ class VQADataSet(Sequence):
     def __init__(self, raw_ds,
                  tok_path='input/tok.pkl', label_encoder_path='input/label_encoder.pkl',
                  feature_path='output_tr.h5', multi_label=False, is_test=False,
-                 batch_size=128, len_q=15, len_video=10, seed=123, num_class=1000,
+                 batch_size=128, len_q=15, len_video=None, seed=123, num_class=1000,
                  frame_aggregate_strategy='average',
                  shuffle_data=True):
 
@@ -55,10 +55,10 @@ class VQADataSet(Sequence):
         self.raw_data = meta_data
 
         # save to evaluate results
-        self.questions_raw = new_data['question']
+        self.questions_text = new_data['question']
         self.video_ids = new_data['video_id']
 
-        question_series = self.tok.texts_to_sequences(self.questions_raw)
+        question_series = self.tok.texts_to_sequences(self.questions_text)
         self.questions = pad_sequences(question_series, maxlen=len_q)
         if not is_test:
             answer_series = new_data['answer']
@@ -67,6 +67,8 @@ class VQADataSet(Sequence):
             self.answers = None
         assert frame_aggregate_strategy in ['average', 'no_aggregation', 'multi_instance', 'single_instance']
         self.frame_aggregate_strategy = frame_aggregate_strategy
+        self.questions_raw = self.questions
+        self.answers_raw = self.answers
         self.load_resource(frame_aggregate_strategy, feature_path)
 
     def load_resource(self, frame_aggregate_strategy, feature_path, ):
@@ -108,8 +110,9 @@ class VQADataSet(Sequence):
         else:
             assert frame_aggregate_strategy == 'multi_instance'
             # split each video into several smaller videos with same label
-            questions = self.questions
-            answers = self.answers
+            # TODO fix bugs: when reloading ,the q and a are already duplicated!
+            questions = self.questions_raw
+            answers = self.answers_raw
             self.img_feature = []
             len_sub_instances = []
             with h5py.File(feature_path, 'r') as hf:
@@ -119,7 +122,10 @@ class VQADataSet(Sequence):
 
                     self.img_feature_shape = tuple(video_feature.shape[1:])
                     t = np.random.permutation(video_feature.shape[0])
-                    len_video = min(video_feature.shape[0], self.len_video)
+                    if self.len_video is None:
+                        len_video = video_feature.shape[0]
+                    else:
+                        len_video = min(video_feature.shape[0], self.len_video)
                     len_sub_instances.append(len_video)
 
                     t = sorted(t[:len_video])
@@ -200,7 +206,7 @@ class VQADataSet(Sequence):
             vid = self.video_ids[i]
             data_to_submit_i = [vid]
             for j in range(num_question):
-                qj = self.questions_raw[i + j]
+                qj = self.questions_text[i + j]
                 pj = predictions[i + j]
                 data_to_submit_i.append(qj)
                 data_to_submit_i.append(pj)

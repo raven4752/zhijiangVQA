@@ -20,14 +20,14 @@ ex.observers.append(MongoObserver.create(url=mongo_url,
 
 @ex.config
 def cfg():
-    protocol = 'val'
-    num_repeat = 1
+    protocol = 'cv'
+    num_repeat = 10
     multi_label = True
     num_class = 1000  # num of candidate answers
     len_q = 15  # length of question
     batch_size = 128
     test_batch_size = 1024
-    epochs = 6
+    epochs = 20
     seed = 123
     output_dir = 'out'
     frame_aggregate_strategy = 'multi_instance'

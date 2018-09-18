@@ -41,6 +41,11 @@
 3. [第二次youtube-8m竞赛冠军方案](https://www.kaggle.com/c/youtube8m-2018/discussion/62781)
 4. [视频动作分类](https://github.com/kenshohara/video-classification-3d-cnn-pytorch)
 
+
+## Unknown Bugs
+1. ~~训练时用多帧增强数据集，无效果；epoch间更换每个视频训练的帧，训练集损失降低很快，测试集性能大幅下降。 但是
+集成时似乎采样帧不同的模型效果效果更好？且测试时平均每帧d的预测结果似乎效果更好？~~(代码有bug)
+2. 观测发现数据集的大多数问题都可以通过观察某一帧回答（再次观察发现有一部分问题属于行为问题），与实验结果相违背
 ## TODO
 -[x] 迁移到sacred框架
 -[ ] 为mongodb数据库添加加密，用mongodb管理artifacts
