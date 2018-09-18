@@ -25,6 +25,7 @@ class VQADataSet(Sequence):
                  batch_size=128, len_q=15, len_video=10, seed=123, num_class=1000,
                  frame_aggregate_strategy='average',
                  shuffle_data=True):
+
         self.len_video = len_video
         self.is_test = is_test
         self.batch_size = batch_size
@@ -53,7 +54,7 @@ class VQADataSet(Sequence):
                 subsets = ['question', 'video_id', 'answer']
             new_data = new_data.drop_duplicates(subset=subsets).reset_index(drop=True)
         self.raw_data = meta_data
-        self.indices = np.arange(new_data.shape[0])
+
         # save to evaluate results
         self.questions_raw = new_data['question']
         self.video_ids = new_data['video_id']
@@ -65,7 +66,7 @@ class VQADataSet(Sequence):
             self.answers = self.label_encoder.transform(answer_series)
         else:
             self.answers = None
-        assert frame_aggregate_strategy in ['average', 'no_aggregation', 'multi_instance']
+        assert frame_aggregate_strategy in ['average', 'no_aggregation', 'multi_instance', 'max']
         self.frame_aggregate_strategy = frame_aggregate_strategy
         if frame_aggregate_strategy == 'average':
             self.img_feature = []
@@ -76,6 +77,16 @@ class VQADataSet(Sequence):
                     self.img_feature_shape = (hf[vid][:].shape[-1],)
                     self.img_feature.append(np.mean(hf[vid][:], axis=0, keepdims=True))
             self.img_feature = np.concatenate(self.img_feature, axis=0)
+        elif frame_aggregate_strategy == 'max':
+            self.img_feature = []
+
+            with h5py.File(feature_path, 'r') as hf:
+                for vid in self.video_ids:  # each vid is duplicated #num_question times
+                    # TODO effieicent resource loading
+                    self.img_feature_shape = (hf[vid][:].shape[-1],)
+                    self.img_feature.append(np.max(hf[vid][:], axis=0, keepdims=True))
+            self.img_feature = np.concatenate(self.img_feature, axis=0)
+
         elif frame_aggregate_strategy == 'no_aggregation':
             self.img_feature = []
 
@@ -120,7 +131,7 @@ class VQADataSet(Sequence):
             self.answers = new_answers
             self.questions = new_questions
             self.len_sub_instances = len_sub_instances
-            self.indices = np.arange(num_sub_instances)
+        self.indices = np.arange(self.questions.shape[0])
 
     def pad_video(self, video):
         zeros = np.zeros(self.img_feature_shape)
@@ -133,6 +144,7 @@ class VQADataSet(Sequence):
 
         batch_img_feature = self.img_feature[inds]
         batch_sen_seq = self.questions[inds]
+
         if not self.is_test:
             batch_answer = self.answers[inds]
             return [batch_img_feature, batch_sen_seq], batch_answer
@@ -179,3 +191,8 @@ class VQADataSet(Sequence):
             return df
         else:
             return RawDataSet(df, num_answer=1).eval_answers(self.raw_data)
+
+    def clear(self):
+        self.img_feature = None
+        self.answers = None
+        self.questions = None

@@ -67,15 +67,15 @@ def gen_feature():
     generate_feature_single('test_pic', 'input/test.txt', 'input/te.h5')
 
 
-def get_baseline_model(vqa_tr):
+def get_baseline_model(vqa_tr, num_dense_image=128):
     embedding = load('input/glove.840B.300d.npy')
-
+    num_rnn_unit = int(num_dense_image/2)
     shape_image = vqa_tr.img_feature_shape
     input_image = Input(shape_image)
     # feature_image = BatchNormalization(input_shape=shape_image)(input_image)
     feature_image = Dropout(0.5, input_shape=shape_image)(input_image)
-    feature_image_t = Dense(64, activation='tanh')(feature_image)
-    # gate_image = Dense(64, activation='sigmoid')(feature_image)
+    feature_image_t = Dense(num_dense_image, activation='tanh')(feature_image)
+    # gate_image = Dense(num_dense_image, activation='sigmoid')(feature_image)
     # feature_image = multiply([feature_image_t, gate_image])
     feature_image = feature_image_t
     shape_question = (vqa_tr.len_q,)
@@ -84,12 +84,13 @@ def get_baseline_model(vqa_tr):
                         trainable=False, input_shape=shape_question)
     feature_q = embed1c(input_question)
     feature_q = SpatialDropout1D(0.1)(feature_q)
-    feature_q = Bidirectional(CuDNNLSTM(32, return_sequences=True))(feature_q)
-    feature_q = GlobalMaxPooling1D()(feature_q)
+    feature_q = Bidirectional(CuDNNLSTM(num_rnn_unit))(
+        feature_q)  # Bidirectional(CuDNNLSTM(32, return_sequences=True))(feature_q)
+    # feature_q = GlobalMaxPooling1D()(feature_q)
     feature = concatenate(
         [feature_image, feature_q, multiply([feature_image, feature_q]), subtract([feature_image, feature_q])])
     feature_res = Dropout(0.5)(feature)
-    feature_res_t = (Dense(256, activation='tanh'))(feature_res)
+    feature_res_t = (Dense(num_dense_image * 4, activation='tanh'))(feature_res)
     # gate_res = Dense(256, activation='sigmoid')(feature_res)
     # feature_res = multiply([gate_res, feature_res_t])
     feature_res = feature_res_t
