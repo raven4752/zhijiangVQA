@@ -7,7 +7,7 @@ from sklearn import svm, datasets
 from sacred import Experiment
 import numpy as np
 from data import VQADataSet
-from model import get_baseline_model
+from model import get_bottom_up_attention_model,get_baseline_model
 import datetime
 from model import ResetCallBack
 import tensorflow as tf
@@ -21,31 +21,35 @@ ex.observers.append(MongoObserver.create(url=mongo_url,
 
 @ex.config
 def cfg():
-    protocol = 'cv_submit'
-    num_repeat = 10
+    protocol = 'val'
+    num_repeat = 1
     multi_label = True
     num_class = 1000  # num of candidate answers
     len_q = 15  # length of question
     batch_size = 128
     test_batch_size = 1024
-    epochs = 10
+    epochs = 20
     seed = 123
     output_dir = 'out'
-    frame_aggregate_strategy = 'average'
+    frame_aggregate_strategy = 'multi_instance'
     if multi_label:
         label_encoder_path = 'input/label_encoder_multi_' + str(num_class) + '.pkl'
     else:
         label_encoder_path = 'input/label_encoder_' + str(num_class) + '.pkl'
-    video_feature = 'resnext_64f'
+    video_feature = 'faster_rcnn_10f'
     train_resource_path = 'input/%s/tr.h5' % video_feature
     test_resource_path = 'input/%s/te.h5' % video_feature
     artifact_dir = 'out'
+    len_video = 1
+    model_params = {
+        'num_dense_image': 128
+    }
 
 
 @ex.automain
 def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_batch_size, epochs, seed, output_dir,
         artifact_dir,
-        label_encoder_path, frame_aggregate_strategy, train_resource_path, test_resource_path):
+        label_encoder_path, frame_aggregate_strategy, train_resource_path, test_resource_path, len_video, model_params):
     assert protocol in ['val', 'cv', 'submit', 'cv_submit']
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -97,13 +101,15 @@ def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_ba
         ds_tr = VQADataSet(raw_ds_tr, multi_label=multi_label, len_q=len_q, num_class=num_class,
                            batch_size=batch_size, feature_path=train_resource_path,
                            label_encoder_path=label_encoder_path,
-                           frame_aggregate_strategy=frame_aggregate_strategy)
+                           frame_aggregate_strategy=frame_aggregate_strategy, len_video=len_video)
+
+        model = get_bottom_up_attention_model(ds_tr, **model_params)
+        model.fit_generator(ds_tr, epochs=epochs, callbacks=[ResetCallBack(ds_tr)])
+        ds_tr.clear()
         ds_te = VQADataSet(raw_ds_te, multi_label=multi_label, len_q=len_q, num_class=num_class,
                            batch_size=test_batch_size, is_test=True, shuffle_data=False,
                            feature_path=test_resource_path, label_encoder_path=label_encoder_path,
                            frame_aggregate_strategy=frame_aggregate_strategy)
-        model = get_baseline_model(ds_tr)
-        model.fit_generator(ds_tr, epochs=epochs, callbacks=[ResetCallBack(ds_tr)])
         p_te = model.predict_generator(ds_te)
         predictions.append(p_te)
         if artifact_dir is not None:

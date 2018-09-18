@@ -28,7 +28,7 @@
     -[x] [VGG-19 on imagenet](https://keras.io/applications/#vgg19) 图像分类模型， 可标注每一帧的特征
     -[x] [resnext-101 on kinetics](https://github.com/raven4752/video-classification-3d-cnn-pytorch) 视频分类模型，可标注每64帧的特征
     -[ ] resnet-101 on imagenet on kinetics 用imagenet预训练的图像分类模型在kinetics数据集上训练的视频分类模型
-    -[ ] fast-rcnn 物体识别模型
+    -[x] fast-rcnn 物体识别模型
     -[ ] 图像问题回答模型 on VQA v2
 3. 由于数据较少，数据增广可能对结果有着重要的影响
     -[ ] 视频级别增广

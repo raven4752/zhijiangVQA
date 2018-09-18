@@ -35,6 +35,7 @@ class VQADataSet(Sequence):
         self.label_encoder = load(label_encoder_path)
         self.multi_label = multi_label
         self.shuffle_data = shuffle_data
+        self.feature_path = feature_path
         if multi_label:
             assert len(self.label_encoder.classes_) == num_class
         else:
@@ -105,10 +106,15 @@ class VQADataSet(Sequence):
             with h5py.File(feature_path, 'r') as hf:
                 for vid in self.video_ids:
                     video_feature = hf[vid][:]
-                    assert len(video_feature.shape) == 2
-                    self.img_feature_shape = (video_feature.shape[-1],)
-                    len_sub_instances.append(video_feature.shape[0])
-                    self.img_feature.append(video_feature)
+                    # assert len(video_feature.shape) == 2
+
+                    self.img_feature_shape = tuple(video_feature.shape[1:])
+                    t = np.random.permutation(video_feature.shape[0])
+                    len_video = min(video_feature.shape[0], self.len_video)
+                    len_sub_instances.append(len_video)
+
+                    t = sorted(t[:len_video])
+                    self.img_feature.append(video_feature[t])
             num_sub_instances = sum(len_sub_instances)
             new_questions = np.empty([num_sub_instances, self.questions.shape[1]])
             if answers is None:
