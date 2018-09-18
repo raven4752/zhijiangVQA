@@ -7,15 +7,7 @@ from keras.utils import Sequence
 from sklearn.utils import shuffle
 import random
 from utils import load, RawDataSet
-
-
-class ResetCallBack(Callback):
-    def __init__(self, seq):
-        super(ResetCallBack, self).__init__()
-        self.seq = seq
-
-    def on_epoch_end(self, epoch, logs=None):
-        self.seq.reset()
+import traceback
 
 
 class VQADataSet(Sequence):
@@ -138,7 +130,7 @@ class VQADataSet(Sequence):
                 new_answers = None
             else:
                 new_answers = np.empty([num_sub_instances, self.answers.shape[1]])
-            self.img_feature = np.concatenate(self.img_feature, axis=0)
+            self.img_feature = np.array(np.concatenate(self.img_feature, axis=0))
             assert len(self.img_feature) == num_sub_instances
             index_sub_i = 0
             for i, len_sub_instance in enumerate(len_sub_instances):
@@ -163,11 +155,13 @@ class VQADataSet(Sequence):
         return zeros
 
     def __getitem__(self, idx):
+
         inds = self.indices[idx * self.batch_size:(idx + 1) * self.batch_size]
         try:
-            batch_img_feature = self.img_feature[inds]
+            assert not isinstance(self.img_feature, list)
         except:
-            print('fk')
+            self.img_feature = np.array(self.img_feature)
+        batch_img_feature = self.img_feature[inds]
         batch_sen_seq = self.questions[inds]
 
         if not self.is_test:
@@ -179,10 +173,9 @@ class VQADataSet(Sequence):
     def __len__(self):
         return int(np.ceil(len(self.img_feature) / float(self.batch_size)))
 
-    def reset(self):
-        # TODO fix bugs of dynamic resource loading
-        # if self.frame_aggregate_strategy == 'single_instance':
-        #    self.load_resource(self.frame_aggregate_strategy, self.feature_path)
+    def on_epoch_end(self):
+        if self.frame_aggregate_strategy == 'single_instance' or self.frame_aggregate_strategy == 'multi_instance':
+            self.load_resource(self.frame_aggregate_strategy, self.feature_path)
         np.random.shuffle(self.indices)
 
     def eval_or_submit(self, predictions, output_path=None):

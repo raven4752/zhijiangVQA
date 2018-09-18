@@ -4,7 +4,7 @@ import os
 import fire
 import h5py
 from keras.preprocessing import image
-from  data import VQADataSet, ResetCallBack
+from  data import VQADataSet
 from utils import load
 from keras.layers import Input, Embedding, SpatialDropout1D, Dropout, CuDNNGRU, CuDNNLSTM, Dense, GlobalMaxPooling1D, \
     concatenate, \

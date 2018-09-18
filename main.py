@@ -9,11 +9,10 @@ import numpy as np
 from data import VQADataSet
 from model import get_bottom_up_attention_model, get_baseline_model
 import datetime
-from model import ResetCallBack
 import tensorflow as tf
 from keras.backend.tensorflow_backend import set_session
 from tensorflow import set_random_seed
-
+import random
 ex = Experiment('vqa')
 ex.observers.append(MongoObserver.create(url=mongo_url,
                                          db_name=mongo_db))
@@ -21,14 +20,14 @@ ex.observers.append(MongoObserver.create(url=mongo_url,
 
 @ex.config
 def cfg():
-    protocol = 'cv_submit'
-    num_repeat = 10
+    protocol = 'val'
+    num_repeat = 1
     multi_label = True
     num_class = 1000  # num of candidate answers
     len_q = 15  # length of question
     batch_size = 128
     test_batch_size = 1024
-    epochs = 15
+    epochs = 6
     seed = 123
     output_dir = 'out'
     frame_aggregate_strategy = 'multi_instance'
@@ -61,7 +60,9 @@ def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_ba
     else:
         assert model_type == 'bottom-up-attention'
         model_func = get_bottom_up_attention_model
+
     np.random.seed(seed)
+    random.seed(seed+1)
     set_random_seed(seed + 2)
     raw_ds_tr = RawDataSet(data_path=raw_meta_train_path)
     results = []
@@ -111,7 +112,7 @@ def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_ba
                            frame_aggregate_strategy=frame_aggregate_strategy, len_video=len_video)
 
         model = model_func(ds_tr, **model_params)
-        model.fit_generator(ds_tr, epochs=epochs, callbacks=[ResetCallBack(ds_tr)])
+        model.fit_generator(ds_tr, epochs=epochs,)
         ds_tr.clear()
         ds_te = VQADataSet(raw_ds_te, multi_label=multi_label, len_q=len_q, num_class=num_class,
                            batch_size=test_batch_size, is_test=True, shuffle_data=False,
@@ -140,7 +141,7 @@ def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_ba
             results.append(avg)
             results.append(std)
     if protocol == 'cv_submit':
-        # TODO fix bug in cv_submit
+        # TODO support ensemble of different aggregation strategies
         predictions_total = np.zeros_like(predictions[0])
         for p in predictions:
             predictions_total += p
