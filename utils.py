@@ -23,7 +23,7 @@ from  sklearn.preprocessing import LabelBinarizer, MultiLabelBinarizer
 from sklearn.model_selection import train_test_split, KFold
 from itertools import chain
 
-raw_dir = 'VQADatasetA_20180815'
+raw_dir = 'raw'
 raw_meta_train_path = raw_dir + '/train.txt'  # cleaned
 raw_meta_test_path = raw_dir + '/test.txt'
 raw_train_video_path = raw_dir + '/train'
@@ -34,6 +34,25 @@ column_vid = 'video_id'
 mongo_url = '114.212.84.12:27017'
 mongo_db = 'MY_DB'
 output_dir = 'out'
+
+
+def check_data():
+    print('train')
+    ds = RawDataSet(data_path=raw_meta_train_path)
+    for v, q, answers in ds.iter_vqa_line():
+        if len(q.split()) < 3:
+            print(v, q)
+        for a in answers:
+            if len(a.strip()) == 0 or len(a.split()) > 3:
+                print(v, a)
+    print('test')
+    ds = RawDataSet(data_path=raw_meta_test_path)
+    for v, q, answers in ds.iter_vqa_line():
+        if len(q.split()) < 3:
+            print(v, q)
+        for a in answers:
+            if not isinstance(a, int):
+                print(v, a)
 
 
 def v2p(path='VQADatasetA_20180815/test/', pic_dir='test_pic'
