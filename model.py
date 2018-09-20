@@ -144,6 +144,7 @@ def get_bottom_up_attention_model(vqa_tr, num_dense_image=128):
     feature_q = SpatialDropout1D(0.2)(feature_q)
     feature_q = Bidirectional(CuDNNLSTM(num_rnn_unit))(
         feature_q)
+
     # feature_q = Dropout(0.5)(feature_q)
     shape_image = vqa_tr.img_feature_shape
     assert len(shape_image) == 2
@@ -152,24 +153,24 @@ def get_bottom_up_attention_model(vqa_tr, num_dense_image=128):
     feature_image = SpatialDropout1D(0.5, input_shape=shape_image)(feature_image)
 
     feature_q_r = RepeatVector(shape_image[0])(feature_q)
-    #feature_q_r = SpatialDropout1D(0.5)(feature_q_r)
+    # feature_q_r = SpatialDropout1D(0.5)(feature_q_r)
     feature_merge = concatenate([feature_q_r, feature_image], axis=-1)
     feature_merge_att = KVAttention(shape_image[0])([feature_merge, feature_image])
-    #feature_merge_att = Dropout(0.5)(feature_merge_att)
+    # feature_merge_att = Dropout(0.5)(feature_merge_att)
     feature_image_t = Dense(num_dense_image, activation='tanh')(feature_merge_att)
-    # gate_image = Dense(num_dense_image, activation='sigmoid')(feature_image)
-    # feature_image = multiply([feature_image_t, gate_image])
+    # gate_image = Dense(num_dense_image, activation='sigmoid')(feature_merge_att)
+    # feature_image = multiply([feature_merge_att, gate_image])
     feature_image = feature_image_t
-    #feature_q = Dropout(0.5)(feature_q)
+    # feature_q = Dropout(0.5)(feature_q)
     # Bidirectional(CuDNNLSTM(32, return_sequences=True))(feature_q)
     # feature_q = GlobalMaxPooling1D()(feature_q)
     feature = concatenate(
         [feature_image, feature_q, multiply([feature_image, feature_q]), subtract([feature_image, feature_q])])
     feature_res = Dropout(0.5)(feature)
     feature_res_t = (Dense(num_dense_image * 4, activation='tanh'))(feature_res)
-    # gate_res = Dense(256, activation='sigmoid')(feature_res)
-    # feature_res = multiply([gate_res, feature_res_t])
-    feature_res = feature_res_t
+    gate_res = Dense(num_dense_image * 4, activation='sigmoid')(feature_res)
+    feature_res = multiply([gate_res, feature])
+    # feature_res = feature_res_t
     feature = add([feature, feature_res])
     # feature =feature_image
     # feature = concatenate(
@@ -180,6 +181,8 @@ def get_bottom_up_attention_model(vqa_tr, num_dense_image=128):
     else:
         activation = 'softmax'
     out = Dense(vqa_tr.num_target, activation=activation)(feature)
+    out_gate = Dense(vqa_tr.num_target, activation='sigmoid')(Dropout(0.5)(out))
+    out = multiply([out, out_gate])
     model = Model(inputs=[input_image, input_question], outputs=out)
     model.compile('adam', loss=categorical_crossentropy)
     model.summary()
@@ -223,6 +226,7 @@ def get_baseline_model(vqa_tr, num_dense_image=128):
     else:
         activation = 'softmax'
     out = Dense(vqa_tr.num_target, activation=activation)(feature)
+
     model = Model(inputs=[input_image, input_question], outputs=out)
     model.compile('adam', loss=categorical_crossentropy)
     model.summary()
@@ -258,6 +262,8 @@ def get_baseline_model_seq(vqa_tr):
     # feature = Dropout(0.5)(feature)
 
     out = Dense(vqa_tr.num_target, activation='softmax')(feature)
+
+
     model = Model(inputs=[input_image, input_question], outputs=out)
     model.compile('adam', loss=categorical_crossentropy)
     model.summary()
