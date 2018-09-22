@@ -20,8 +20,8 @@ ex.observers.append(MongoObserver.create(url=mongo_url,
 
 @ex.config
 def cfg():
-    protocol = 'cv'
-    num_repeat = 10
+    protocol = 'val'
+    num_repeat = 1
     multi_label = True
     num_class = 1000  # num of candidate answers
     len_q = 15  # length of question

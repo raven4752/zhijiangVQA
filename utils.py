@@ -23,7 +23,7 @@ from  sklearn.preprocessing import LabelBinarizer, MultiLabelBinarizer
 from sklearn.model_selection import train_test_split, KFold
 from itertools import chain
 
-raw_dir = 'raw'
+raw_dir = 'raw_a'
 raw_meta_train_path = raw_dir + '/train.txt'  # cleaned
 raw_meta_test_path = raw_dir + '/test.txt'
 raw_train_video_path = raw_dir + '/train'

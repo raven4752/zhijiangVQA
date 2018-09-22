@@ -180,8 +180,8 @@ class VQADataSet(Sequence):
         return int(np.ceil(len(self.img_feature) / float(self.batch_size)))
 
     def on_epoch_end(self):
-        if self.frame_aggregate_strategy == 'single_instance' or self.frame_aggregate_strategy == 'multi_instance':
-            self.load_resource(self.frame_aggregate_strategy, self.feature_path)
+        #if self.frame_aggregate_strategy == 'single_instance' or self.frame_aggregate_strategy == 'multi_instance':
+        #    self.load_resource(self.frame_aggregate_strategy, self.feature_path)
         np.random.shuffle(self.indices)
 
     def eval_or_submit(self, predictions, output_path=None):
