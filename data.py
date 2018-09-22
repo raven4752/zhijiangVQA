@@ -10,6 +10,28 @@ from utils import load, RawDataSet, raw_meta_train_path, raw_meta_test_path, sav
 import traceback
 
 
+class FeatureCache:
+    def __init__(self,id_indices,resource_path,num_shards=3):
+        self.num_shards = num_shards
+        self.resource_path = resource_path
+
+    def __getitem__(self, idx):
+
+        inds = self._indices[idx * self.batch_size:(idx + 1) * self.batch_size]
+        batch_img_feature = self._img_feature[inds]
+        batch_sen_seq = self._questions[inds]
+
+        if not self.is_test:
+            batch_answer = self._answers[inds]
+            return [batch_img_feature, batch_sen_seq], batch_answer
+        else:
+            return [batch_img_feature, batch_sen_seq]
+
+    def __len__(self):
+        return int(np.ceil(len(self._img_feature) / float(self.batch_size)))
+
+
+
 class VQADataSet(Sequence):
     def __init__(self, raw_ds,
                  tok_path='input/tok.pkl', label_encoder_path='input/label_encoder.pkl',
@@ -50,91 +72,127 @@ class VQADataSet(Sequence):
         self.raw_data = meta_data
 
         # save to evaluate results
-        self.questions_text = new_data['question']
-        self.video_ids = new_data['video_id']
+        self._questions_text = new_data['question']
+        self._video_ids_raw = new_data['video_id']
+        self._index_vid_map = self._video_ids_raw.drop_duplicates().reset_index(drop=True)
+        self._vid_index_map = pd.Series(self._index_vid_map.index.values, index=self._index_vid_map)  # vid ->index map
+        self._video_indexes = self._vid_index_map[self._video_ids_raw].as_matrix().ravel()  # index of videos
 
-        question_series = self.tok.texts_to_sequences(self.questions_text)
-        self.questions = pad_sequences(question_series, maxlen=len_q)
+        question_series = self.tok.texts_to_sequences(self._questions_text)
+        self._questions = pad_sequences(question_series, maxlen=len_q)
         if not is_test:
             answer_series = new_data['answer']
-            self.answers = self.label_encoder.transform(answer_series)
+            self._answers = self.label_encoder.transform(answer_series)
         else:
-            self.answers = np.zeros([len(self.questions), self.num_target])
-        self.frame_aggregate_strategy = frame_aggregate_strategy
-        self.questions_raw = self.questions
-        self.answers_raw = self.answers
+            self._answers = np.zeros([len(self._questions), self.num_target])
+        self._frame_aggregate_strategy = frame_aggregate_strategy
+        self._questions_raw = self._questions
+        self._answers_raw = self._answers
+
+        # self.index_vid_map = index_vid_map.sort_values()
         assert frame_aggregate_strategy in ['average', 'no_aggregation', 'multi_instance']
 
-        self.len_sub_instances = None
+        self._len_sub_instances = None
         self.img_feature_shape = None
-        self.num_instances = self.set_num_of_instances()
-        self.img_feature = None
-        self.img_feature_index = None
+        self.num_instances = self._set_meta_data()
+        self._img_feature = None
+        self._img_feature_index = None
 
-        self.indices = None
         self.load_resource()
+        if self._frame_aggregate_strategy == 'multi_instance':
+            self._handle_multi_instance()
+        self._indices = np.arange(self._questions.shape[0], dtype=np.int32)
+        assert self.num_instances == len(self._questions) == len(
+            self._answers) == len(self._video_indexes) == len(self._img_feature)
+
         # caculate length of instances:
 
-    def set_num_of_instances(self):
+    def _set_meta_data(self):
         len_sub_instances = []
 
         with h5py.File(self.feature_path, 'r') as hf:
-            for vid in self.video_ids:
+            for vid in self._video_ids_raw:
                 # TODO efficient resource loading
                 video_feature_shape = hf[vid][:].shape
-                if self.frame_aggregate_strategy == 'average':
+                if self._frame_aggregate_strategy == 'average':
                     self.img_feature_shape = video_feature_shape[1:]
-                    len_sub_instances = np.ones([len(self.video_ids)], dtype=np.int32)
+                    len_sub_instances = np.ones([len(self._video_ids_raw)], dtype=np.int32)
                     break
-                elif self.frame_aggregate_strategy == 'no_aggregation':
+                elif self._frame_aggregate_strategy == 'no_aggregation':
                     new_shape = list(video_feature_shape)
                     new_shape[0] = self.len_video
                     self.img_feature_shape = tuple(new_shape)
-                    len_sub_instances = np.ones([len(self.video_ids)], dtype=np.int32)
+                    len_sub_instances = np.ones([len(self._video_ids_raw)], dtype=np.int32)
                     break
                 else:
-                    assert self.frame_aggregate_strategy == 'multi_instance'
+                    assert self._frame_aggregate_strategy == 'multi_instance'
                     self.img_feature_shape = tuple(video_feature_shape[1:])
                     if self.len_video is None:
                         len_video = video_feature_shape[0]
                     else:
                         len_video = min(video_feature_shape[0], self.len_video)
                     len_sub_instances.append(len_video)
-        self.len_sub_instances = len_sub_instances
-        return sum(self.len_sub_instances)
+        self._len_sub_instances = len_sub_instances
+        return sum(self._len_sub_instances)
+
+    def _handle_multi_instance(self):
+        # duplicating q,a,vids
+        vid_index = self._vid_index_map[self._video_ids_raw]
+        num_sub_instances = self.num_instances
+        new_questions = np.empty([num_sub_instances, self._questions.shape[1]], dtype=np.int32)
+        new_answers = np.empty([num_sub_instances, self._answers.shape[1]], dtype=np.int32)
+        new_vids = np.empty([num_sub_instances, ], dtype=np.int32)
+        index_sub_i = 0
+        for i, len_sub_instance in enumerate(self._len_sub_instances):
+            new_questions[index_sub_i:index_sub_i + len_sub_instance] = np.repeat(
+                np.expand_dims(self._questions_raw[i], axis=0),
+                len_sub_instance, axis=0)
+            new_answers[index_sub_i:index_sub_i + len_sub_instance] = np.repeat(
+                np.expand_dims(self._answers_raw[i], axis=0),
+                len_sub_instance, axis=0)
+            new_vids[index_sub_i:index_sub_i + len_sub_instance] = np.repeat(
+                vid_index[i],
+                len_sub_instance)
+            index_sub_i += len_sub_instance
+
+        self._answers = new_answers
+        self._questions = new_questions
+        self._video_indexes = new_vids
+
+    def get_instance_feature(self, ind):
+        pass
 
     def load_resource(self):
-        frame_aggregate_strategy = self.frame_aggregate_strategy
+        frame_aggregate_strategy = self._frame_aggregate_strategy
         feature_path = self.feature_path
+        vids = self._index_vid_map[self._video_indexes]
         # TODO refactor resource loading
         if frame_aggregate_strategy == 'average':
-            self.img_feature = []
+            self._img_feature = []
 
             with h5py.File(feature_path, 'r') as hf:
-                for vid in self.video_ids:
+                for vid in vids:
                     # TODO efficient resource loading
                     video_feature = hf[vid][:]
 
-                    self.img_feature.append(np.mean(video_feature, axis=0, keepdims=True))
-            self.img_feature = np.concatenate(self.img_feature, axis=0)
+                    self._img_feature.append(np.mean(video_feature, axis=0, keepdims=True))
+            self._img_feature = np.concatenate(self._img_feature, axis=0)
 
         elif frame_aggregate_strategy == 'no_aggregation':
-            self.img_feature = []
+            self._img_feature = []
 
             with h5py.File(feature_path, 'r') as hf:
-                for vid in self.video_ids:
+                for vid in vids:
                     video_feature = hf[vid][:]
 
-                    self.img_feature.append(np.expand_dims(self.pad_video(video_feature), axis=0))
-            self.img_feature = np.concatenate(self.img_feature, axis=0)
+                    self._img_feature.append(np.expand_dims(self._pad_video(video_feature), axis=0))
+            self._img_feature = np.concatenate(self._img_feature, axis=0)
         else:
             assert frame_aggregate_strategy == 'multi_instance'
             # split each video into several smaller videos with same label
-            questions = self.questions_raw
-            answers = self.answers_raw
-            self.img_feature = []
+            self._img_feature = []
             with h5py.File(feature_path, 'r') as hf:
-                for vid in self.video_ids:
+                for vid in vids:
                     video_feature = hf[vid][:]
                     # assert len(video_feature.shape) == 2
                     video_feature = video_feature[:, :12, :]
@@ -145,27 +203,10 @@ class VQADataSet(Sequence):
                         len_video = min(video_feature.shape[0], self.len_video)
 
                     t = sorted(t[:len_video])
-                    self.img_feature.append(video_feature[t])
-            num_sub_instances = self.num_instances
-            new_questions = np.empty([num_sub_instances, self.questions.shape[1]])
-            new_answers = np.empty([num_sub_instances, self.answers.shape[1]])
-            self.img_feature = np.array(np.concatenate(self.img_feature, axis=0))
-            assert len(self.img_feature) == num_sub_instances
-            index_sub_i = 0
-            for i, len_sub_instance in enumerate(self.len_sub_instances):
-                new_questions[index_sub_i:index_sub_i + len_sub_instance] = np.repeat(
-                    np.expand_dims(questions[i], axis=0),
-                    len_sub_instance, axis=0)
-                new_answers[index_sub_i:index_sub_i + len_sub_instance] = np.repeat(
-                    np.expand_dims(answers[i], axis=0),
-                    len_sub_instance, axis=0)
-                index_sub_i += len_sub_instance
+                    self._img_feature.append(video_feature[t])
+            self._img_feature = np.array(np.concatenate(self._img_feature, axis=0))
 
-            self.answers = new_answers
-            self.questions = new_questions
-        self.indices = np.arange(self.questions.shape[0], dtype=np.int32)
-
-    def pad_video(self, video):
+    def _pad_video(self, video):
         zeros = np.zeros(self.img_feature_shape)
         len_to_copy = min(self.len_video, video.shape[0])
         zeros[:len_to_copy] = video[:len_to_copy]
@@ -173,33 +214,33 @@ class VQADataSet(Sequence):
 
     def __getitem__(self, idx):
 
-        inds = self.indices[idx * self.batch_size:(idx + 1) * self.batch_size]
-        batch_img_feature = self.img_feature[inds]
-        batch_sen_seq = self.questions[inds]
+        inds = self._indices[idx * self.batch_size:(idx + 1) * self.batch_size]
+        batch_img_feature = self._img_feature[inds]
+        batch_sen_seq = self._questions[inds]
 
         if not self.is_test:
-            batch_answer = self.answers[inds]
+            batch_answer = self._answers[inds]
             return [batch_img_feature, batch_sen_seq], batch_answer
         else:
             return [batch_img_feature, batch_sen_seq]
 
     def __len__(self):
-        return int(np.ceil(len(self.img_feature) / float(self.batch_size)))
+        return int(np.ceil(len(self._img_feature) / float(self.batch_size)))
 
     def on_epoch_end(self):
         # if self.frame_aggregate_strategy == 'single_instance' or self.frame_aggregate_strategy == 'multi_instance':
         #    self.load_resource(self.frame_aggregate_strategy, self.feature_path)
-        np.random.shuffle(self.indices)
+        np.random.shuffle(self._indices)
 
     def eval_or_submit(self, predictions, output_path=None):
         assert self.is_test
         assert not self.shuffle_data
         num_question = self.raw_data.num_question
-        if self.frame_aggregate_strategy == 'multi_instance':
+        if self._frame_aggregate_strategy == 'multi_instance':
             # turn predictions of sub instances into predictions of instances
-            new_predictions = np.empty([len(self.video_ids), predictions.shape[1]])
+            new_predictions = np.empty([len(self._video_ids_raw), predictions.shape[1]])
             index = 0
-            for i, len_sub_instance in enumerate(self.len_sub_instances):
+            for i, len_sub_instance in enumerate(self._len_sub_instances):
                 predictions_sub = predictions[index:index + len_sub_instance]
                 new_predictions[i] = np.mean(predictions_sub, axis=0)
                 index += len_sub_instance
@@ -210,10 +251,10 @@ class VQADataSet(Sequence):
         # TODO handle submit in multi label case
         data_to_submit = []
         for i in range(0, len(predictions), num_question):
-            vid = self.video_ids[i]
+            vid = self._video_ids_raw[i]
             data_to_submit_i = [vid]
             for j in range(num_question):
-                qj = self.questions_text[i + j]
+                qj = self._questions_text[i + j]
                 pj = predictions[i + j]
                 data_to_submit_i.append(qj)
                 data_to_submit_i.append(pj)
@@ -227,18 +268,18 @@ class VQADataSet(Sequence):
             return RawDataSet(df, num_answer=1).eval_answers(self.raw_data)
 
     def clear(self):
-        self.img_feature = None
-        self.answers = None
-        self.questions = None
+        self._img_feature = None
+        self._answers = None
+        self._questions = None
 
 
 if __name__ == '__main__':
     seed = 123
     np.random.seed(seed)
     random.seed(seed + 1)
-    video_feature = 'faster_rcnn_10f'
-    train_resource_path = 'input/%s/tr.h5' % video_feature
-    test_resource_path = 'input/%s/te.h5' % video_feature
+    video_feature_dir = 'faster_rcnn_10f'
+    train_resource_path = 'input/%s/tr.h5' % video_feature_dir
+    test_resource_path = 'input/%s/te.h5' % video_feature_dir
     label_encoder_path = 'input/label_encoder_multi_1000.pkl'
     from utils import AnswerEncoder
 
