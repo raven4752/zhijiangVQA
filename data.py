@@ -14,7 +14,7 @@ class FeatureCache:
     def __init__(self, frame_aggregate_strategy, video_indexes, index_vid_map,
                  len_video,
                  feature_path, batch_size, frame_index_for_sub_instances,
-                 lazy_load=False):
+                 lazy_load=True):
         self.frame_index_for_sub_instances = frame_index_for_sub_instances
         self.lazy_load = lazy_load
         self.batch_size = batch_size
@@ -104,16 +104,17 @@ class FeatureCache:
         frame_aggregate_strategy = self._frame_aggregate_strategy
         feature_path = self.feature_path
         vids = self._index_vid_map[vids]
-
-        # TODO refactor resource loading
+        seen_vid_feature_map = {}
         if frame_aggregate_strategy == 'average':
             video_features = []
 
             with h5py.File(feature_path, 'r') as hf:
                 for vid in vids:
-                    # TODO efficient resource loading
-                    video_feature = hf[vid][:]
-
+                    if vid in seen_vid_feature_map:
+                        video_feature = seen_vid_feature_map[vid]
+                    else:
+                        video_feature = hf[vid][:]
+                        seen_vid_feature_map[vid] = video_feature
                     video_features.append(np.mean(video_feature, axis=0, keepdims=True))
             video_features = np.concatenate(video_features, axis=0)
 
@@ -122,8 +123,11 @@ class FeatureCache:
 
             with h5py.File(feature_path, 'r') as hf:
                 for vid in vids:
-                    video_feature = hf[vid][:]
-
+                    if vid in seen_vid_feature_map:
+                        video_feature = seen_vid_feature_map[vid]
+                    else:
+                        video_feature = hf[vid][:]
+                        seen_vid_feature_map[vid] = video_feature
                     video_features.append(np.expand_dims(self._pad_video(video_feature), axis=0))
             video_features = np.concatenate(video_features, axis=0)
         else:
@@ -131,13 +135,16 @@ class FeatureCache:
             # the _vid index is already duplicated
             frame_to_use = self.frame_index_for_sub_instances[inds]
 
-            # TODO reduce reading file times
             video_features = []
             with h5py.File(feature_path, 'r') as hf:
                 for f, vid in zip(frame_to_use, vids):
-                    video_feature = hf[vid][:]
+                    if vid in seen_vid_feature_map:
+                        video_feature = seen_vid_feature_map[vid]
+                    else:
+                        video_feature = hf[vid][:]
+                        seen_vid_feature_map[vid] = video_feature
                     video_feature = video_feature[:, :12, :]
-                    video_features.append(video_feature[f])
+                    video_features.append(np.expand_dims(video_feature[f], axis=0))
             video_features = np.array(np.concatenate(video_features, axis=0))
         return video_features
 
@@ -327,7 +334,6 @@ class VQADataSet(Sequence):
         else:
             predictions = self.label_encoder.inverse_transform(predictions)
         assert len(predictions) % num_question == 0
-        # TODO handle submit in multi label case
         data_to_submit = []
         for i in range(0, len(predictions), num_question):
             vid = self._video_ids_raw[i]
