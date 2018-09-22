@@ -13,8 +13,9 @@ import traceback
 class FeatureCache:
     def __init__(self, frame_aggregate_strategy, video_indexes, index_vid_map,
                  len_video,
-                 feature_path, batch_size,
+                 feature_path, batch_size, frame_index_for_sub_instances,
                  lazy_load=False):
+        self.frame_index_for_sub_instances = frame_index_for_sub_instances
         self.lazy_load = lazy_load
         self.batch_size = batch_size
         self._indices = None
@@ -70,20 +71,21 @@ class FeatureCache:
             self._video_features = np.concatenate(self._video_features, axis=0)
         else:
             assert frame_aggregate_strategy == 'multi_instance'
-            # split each video into several smaller videos with same label
+            # the _vid index is not duplicated
             self._video_features = []
+            index = 0
             with h5py.File(feature_path, 'r') as hf:
                 for vid in vids:
                     video_feature = hf[vid][:]
                     # assert len(video_feature.shape) == 2
                     video_feature = video_feature[:, :12, :]
-                    t = np.random.permutation(video_feature.shape[0])
                     if self.len_video is None:
                         len_video = video_feature.shape[0]
                     else:
                         len_video = min(video_feature.shape[0], self.len_video)
 
-                    t = sorted(t[:len_video])
+                    t = self.frame_index_for_sub_instances[index:index + len_video]  # sorted(t[:len_video])
+                    index += len_video
                     self._video_features.append(video_feature[t])
             self._video_features = np.array(np.concatenate(self._video_features, axis=0))
 
@@ -93,14 +95,16 @@ class FeatureCache:
         if not self.lazy_load:
             batch_img_feature = self._video_features[inds]
         else:
-            vids = self._video_indexes[inds]
-            batch_img_feature = self.load_resource_for_video_indexes(vids)
+            batch_img_feature = self.load_resource_for_video_indexes(inds)
         return batch_img_feature
 
-    def load_resource_for_video_indexes(self, v_indexes):
+    def load_resource_for_video_indexes(self, inds):
+        vids = self._video_indexes[inds]
+
         frame_aggregate_strategy = self._frame_aggregate_strategy
         feature_path = self.feature_path
-        vids = self._index_vid_map[v_indexes]
+        vids = self._index_vid_map[vids]
+
         # TODO refactor resource loading
         if frame_aggregate_strategy == 'average':
             video_features = []
@@ -124,21 +128,16 @@ class FeatureCache:
             video_features = np.concatenate(video_features, axis=0)
         else:
             assert frame_aggregate_strategy == 'multi_instance'
-            # split each video into several smaller videos with same label
+            # the _vid index is already duplicated
+            frame_to_use = self.frame_index_for_sub_instances[inds]
+
+            # TODO reduce reading file times
             video_features = []
             with h5py.File(feature_path, 'r') as hf:
-                for vid in vids:
+                for f, vid in zip(frame_to_use, vids):
                     video_feature = hf[vid][:]
-                    # assert len(video_feature.shape) == 2
                     video_feature = video_feature[:, :12, :]
-                    t = np.random.permutation(video_feature.shape[0])
-                    if self.len_video is None:
-                        len_video = video_feature.shape[0]
-                    else:
-                        len_video = min(video_feature.shape[0], self.len_video)
-
-                    t = sorted(t[:len_video])
-                    video_features.append(video_feature[t])
+                    video_features.append(video_feature[f])
             video_features = np.array(np.concatenate(video_features, axis=0))
         return video_features
 
@@ -205,51 +204,66 @@ class VQADataSet(Sequence):
 
         # self.index_vid_map = index_vid_map.sort_values()
         assert frame_aggregate_strategy in ['average', 'no_aggregation', 'multi_instance']
-
-        self._len_sub_instances = None
-        self.img_feature_shape = None
-        self.num_instances = self._set_meta_data()
+        self.num_instances, self.img_feature_shape, \
+        self._len_sub_instances, frame_index_for_sub_instances = self._set_meta_data()
         self.video_features = FeatureCache(frame_aggregate_strategy, self._video_indexes,
                                            self._index_vid_map,
                                            self.len_video, self.feature_path,
-                                           self.batch_size)
+                                           self.batch_size, frame_index_for_sub_instances)
         if self._frame_aggregate_strategy == 'multi_instance':
             self._handle_multi_instance()
+
             self.video_features.set_video_indexes(self._video_indexes)
         self._indices = np.arange(self._questions.shape[0], dtype=np.int32)
         self.video_features.set_indices(self._indices)
         assert self.num_instances == len(self._questions) == len(
             self._answers) == len(self._video_indexes) == len(self.video_features)
-
-        # caculate length of instances:
+        if self._frame_aggregate_strategy == 'multi_instance':
+            assert self.num_instances == len(frame_index_for_sub_instances)
+            # caculate length of instances:
 
     def _set_meta_data(self):
         len_sub_instances = []
-
+        frame_index_for_sub_instances = []
+        video_feature_shape = None
         with h5py.File(self.feature_path, 'r') as hf:
             for vid in self._video_ids_raw:
                 # TODO efficient resource loading
-                video_feature_shape = hf[vid][:].shape
+                video_feature_shape_raw = hf[vid][:].shape
                 if self._frame_aggregate_strategy == 'average':
-                    self.img_feature_shape = video_feature_shape[1:]
+                    if video_feature_shape is None:
+                        video_feature_shape = video_feature_shape_raw[1:]
+                    else:
+                        assert video_feature_shape == video_feature_shape_raw[1:]
                     len_sub_instances = np.ones([len(self._video_ids_raw)], dtype=np.int32)
                     break
                 elif self._frame_aggregate_strategy == 'no_aggregation':
-                    new_shape = list(video_feature_shape)
+                    new_shape = list(video_feature_shape_raw)
                     new_shape[0] = self.len_video
-                    self.img_feature_shape = tuple(new_shape)
+                    new_shape = tuple(new_shape)
+                    if video_feature_shape is None:
+                        video_feature_shape = new_shape
+                    else:
+                        assert video_feature_shape == new_shape
                     len_sub_instances = np.ones([len(self._video_ids_raw)], dtype=np.int32)
                     break
                 else:
                     assert self._frame_aggregate_strategy == 'multi_instance'
-                    self.img_feature_shape = tuple(video_feature_shape[1:])
-                    if self.len_video is None:
-                        len_video = video_feature_shape[0]
+                    if video_feature_shape is None:
+                        video_feature_shape = tuple(video_feature_shape_raw[1:])
                     else:
-                        len_video = min(video_feature_shape[0], self.len_video)
+                        assert video_feature_shape == tuple(video_feature_shape_raw[1:])
+                    t = np.random.permutation(video_feature_shape_raw[0])
+                    if self.len_video is None:
+                        len_video = video_feature_shape_raw[0]
+                    else:
+                        len_video = min(video_feature_shape_raw[0], self.len_video)
+
+                    frame_index_for_sub_instances.append(sorted(t[:len_video]))
                     len_sub_instances.append(len_video)
-        self._len_sub_instances = len_sub_instances
-        return sum(self._len_sub_instances)
+        # TODO allow resetting frame index for each sub instances
+        frame_index_for_sub_instances = np.concatenate(frame_index_for_sub_instances).ravel()
+        return sum(len_sub_instances), video_feature_shape, len_sub_instances, frame_index_for_sub_instances
 
     def _handle_multi_instance(self):
         # duplicating q,a,vids
