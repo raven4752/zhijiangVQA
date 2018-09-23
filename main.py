@@ -13,6 +13,7 @@ import tensorflow as tf
 from keras.backend.tensorflow_backend import set_session
 from tensorflow import set_random_seed
 import random
+
 ex = Experiment('vqa')
 ex.observers.append(MongoObserver.create(url=mongo_url,
                                          db_name=mongo_db))
@@ -23,12 +24,13 @@ def cfg():
     protocol = 'val'
     num_repeat = 1
     multi_label = True
-    num_class = 1000  # num of candidate answers
+    num_class = 500  # num of candidate answers
     len_q = 15  # length of question
     batch_size = 128
-    test_batch_size = 1024
+    test_batch_size = 128
     epochs = 20
     seed = 123
+    lazy_load = True
     output_dir = 'out'
     frame_aggregate_strategy = 'multi_instance'
     if multi_label:
@@ -41,7 +43,7 @@ def cfg():
     artifact_dir = 'out'
     len_video = 2
     model_params = {
-        'num_dense_image': 128
+        'num_dense_image': 512
     }
     model_type = 'bottom-up-attention'
 
@@ -50,7 +52,7 @@ def cfg():
 def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_batch_size, epochs, seed, output_dir,
         artifact_dir,
         label_encoder_path, frame_aggregate_strategy, train_resource_path, test_resource_path, len_video, model_params,
-        model_type):
+        model_type, lazy_load):
     assert protocol in ['val', 'cv', 'submit', 'cv_submit']
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -62,7 +64,7 @@ def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_ba
         model_func = get_bottom_up_attention_model
 
     np.random.seed(seed)
-    random.seed(seed+1)
+    random.seed(seed + 1)
     set_random_seed(seed + 2)
     raw_ds_tr = RawDataSet(data_path=raw_meta_train_path)
     results = []
@@ -76,10 +78,6 @@ def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_ba
         eval = False
     if not eval:
         raw_ds_te = RawDataSet(data_path=raw_meta_test_path)
-        ds_te = VQADataSet(raw_ds_te, multi_label=multi_label, len_q=len_q, num_class=num_class,
-                           batch_size=test_batch_size, is_test=True, shuffle_data=False,
-                           feature_path=test_resource_path, label_encoder_path=label_encoder_path,
-                           frame_aggregate_strategy=frame_aggregate_strategy)
         output_path = os.path.join(output_dir, out_file_name + '.txt')
 
     else:
@@ -105,19 +103,18 @@ def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_ba
         # TODO eval blending predictions performance on cv
     predictions = []
     for raw_ds_tr, raw_ds_te in valid_iter:
-        # TODO reduce resource loading times
         ds_tr = VQADataSet(raw_ds_tr, multi_label=multi_label, len_q=len_q, num_class=num_class,
                            batch_size=batch_size, feature_path=train_resource_path,
                            label_encoder_path=label_encoder_path,
-                           frame_aggregate_strategy=frame_aggregate_strategy, len_video=len_video)
+                           frame_aggregate_strategy=frame_aggregate_strategy, len_video=len_video, lazy_load=lazy_load)
 
         model = model_func(ds_tr, **model_params)
-        model.fit_generator(ds_tr, epochs=epochs,)
+        model.fit_generator(ds_tr, epochs=epochs, )
         ds_tr.clear()
         ds_te = VQADataSet(raw_ds_te, multi_label=multi_label, len_q=len_q, num_class=num_class,
                            batch_size=test_batch_size, is_test=True, shuffle_data=False,
                            feature_path=test_resource_path, label_encoder_path=label_encoder_path,
-                           frame_aggregate_strategy=frame_aggregate_strategy)
+                           frame_aggregate_strategy=frame_aggregate_strategy, lazy_load=lazy_load)
         p_te = model.predict_generator(ds_te)
         predictions.append(p_te)
         if artifact_dir is not None:
