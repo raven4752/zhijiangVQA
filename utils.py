@@ -19,11 +19,12 @@ import fire
 import pickle
 import cv2
 import os
+import h5py
 from  sklearn.preprocessing import LabelBinarizer, MultiLabelBinarizer
 from sklearn.model_selection import train_test_split, KFold
 from itertools import chain
 
-raw_dir = 'raw_a'
+raw_dir = 'raw'
 raw_meta_train_path = raw_dir + '/train.txt'  # cleaned
 raw_meta_test_path = raw_dir + '/test.txt'
 raw_train_video_path = raw_dir + '/train'
@@ -212,6 +213,24 @@ def eval_submits(prediction_path, target_path=raw_val_path):
         return p.eval_answers(t)
 
 
+def dump_meta_data(raw_path=raw_meta_train_path,
+                   feature_path='input/faster_rcnn_10f/tr.h5'):
+    # TODO efficient reading meta data
+    shape = {}
+    meta_data = RawDataSet(raw_path)
+
+    new_data = pd.DataFrame(meta_data.iter_vqa_line(), columns=['video_id', 'question', 'answer'])
+    video_ids_raw = new_data['video_id']
+
+    with h5py.File(feature_path, 'r+') as hf:
+        for vid in video_ids_raw:
+            video_feature_shape_raw = hf[vid][:].shape
+            shape[vid] = video_feature_shape_raw
+    output_path = feature_path.replace('.h5', '.pkl')
+
+    save(shape, output_path)
+
+
 def count_freq(sent_list):
     answer_map = {}
     num = 0
@@ -255,13 +274,21 @@ def stats(train_path=raw_meta_train_path, test_path=raw_meta_test_path):
     report_freq(ds_tr.iter_vqa_pair())
 
 
+class CustomUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        if name == 'AnswerEncoder':
+            return AnswerEncoder
+        return super().find_class(module, name)
+
+
 def load(filename):
     print('loading from %s' % filename)
     if filename.endswith('.npy'):
         obj = np.load(filename)
     else:
         with gzip.open(filename, 'rb') as f:
-            obj = pickle.load(f)
+            return CustomUnpickler(f).load()
+            # obj = pickle.load(f)
     return obj
 
 
