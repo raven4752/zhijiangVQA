@@ -10,13 +10,17 @@ from utils import load, RawDataSet, raw_meta_train_path, raw_meta_test_path, sav
 import traceback
 import gc
 import os
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s : %(levelname)s : %(message)s')
+logger = logging.getLogger(__name__)
 
 
 class FeatureCache:
     def __init__(self, frame_aggregate_strategy, video_indexes, index_vid_map,
                  len_video,
                  feature_path, batch_size, frame_index_for_sub_instances,
-                 lazy_load=True, max_cache_size=4500):
+                 lazy_load=False, max_cache_size=4500):
         self.seen_vid_feature_map = {}
 
         self.max_cache_size = max_cache_size
@@ -30,14 +34,26 @@ class FeatureCache:
         self._index_vid_map = index_vid_map
         self._frame_aggregate_strategy = frame_aggregate_strategy
         self._video_features = None
+        self.cache_visit = 0
+        self.cache_hit = 0
         if not self.lazy_load:
             self.max_cache_size = 1
-            self.load_resource()
+            self._load_resource()
+        else:
+            cache_path = self.feature_path.replace('.h5', '_compact.pkl')
+            if os.path.exists(cache_path):
+                self.seen_vid_feature_map = load(cache_path, use_joblib=True)
+                self.max_cache_size = len(self.seen_vid_feature_map)
 
-    def get_from_cache(self, vid, hf):
+    def set_frame_index(self, frame_index_for_sub_instances):
+        self.frame_index_for_sub_instances = frame_index_for_sub_instances
+
+    def _get_from_cache(self, vid, hf):
+        self.cache_visit += 1
         # TODO check mem size
         if vid in self.seen_vid_feature_map:
             video_feature = self.seen_vid_feature_map[vid]
+            self.cache_hit += 1
         else:
             video_feature = hf[vid][:].astype(np.float32)
             if len(self.seen_vid_feature_map) < self.max_cache_size:
@@ -45,6 +61,7 @@ class FeatureCache:
             elif not self.lazy_load:
                 self.seen_vid_feature_map.pop(next(iter(self.seen_vid_feature_map.keys())))
                 self.seen_vid_feature_map[vid] = video_feature
+
         return video_feature
 
     def set_indices(self, indices):
@@ -63,7 +80,8 @@ class FeatureCache:
         zeros[:len_to_copy] = video[:len_to_copy]
         return zeros
 
-    def load_resource(self):
+    def _load_resource(self):
+        logger.info('start loading resources')
         frame_aggregate_strategy = self._frame_aggregate_strategy
         feature_path = self.feature_path
         vids = self._index_vid_map[self._video_indexes]
@@ -71,11 +89,11 @@ class FeatureCache:
         with h5py.File(feature_path, 'r') as hf:
             if frame_aggregate_strategy == 'average':
                 for vid in vids:
-                    video_feature = self.get_from_cache(vid, hf)
+                    video_feature = self._get_from_cache(vid, hf)
                     self._video_features.append(np.mean(video_feature, axis=0, keepdims=True))
             elif frame_aggregate_strategy == 'no_aggregation':
                 for vid in vids:
-                    video_feature = self.get_from_cache(vid, hf)
+                    video_feature = self._get_from_cache(vid, hf)
 
                     self._video_features.append(np.expand_dims(self._pad_video(video_feature), axis=0))
             else:
@@ -83,8 +101,9 @@ class FeatureCache:
                 # the _vid index is not duplicated
                 index = 0
                 for vid in vids:
-                    video_feature = self.get_from_cache(vid, hf)
+                    video_feature = self._get_from_cache(vid, hf)
                     # assert len(video_feature.shape) == 2
+                    # TODO remove ugly hack
                     video_feature = video_feature[:, :12, :]
                     if self.len_video is None:
                         len_video = video_feature.shape[0]
@@ -95,6 +114,7 @@ class FeatureCache:
                     index += len_video
                     self._video_features.append(video_feature[t])
         self._video_features = np.array(np.concatenate(self._video_features, axis=0), dtype=np.float32)
+        logger.info('cache hitting rate %d/%d' % (self.cache_hit, self.cache_visit))
 
     def __getitem__(self, idx):
 
@@ -102,10 +122,10 @@ class FeatureCache:
         if not self.lazy_load:
             batch_img_feature = self._video_features[inds]
         else:
-            batch_img_feature = self.load_resource_for_video_indexes(inds)
+            batch_img_feature = self._load_resource_for_video_indexes(inds)
         return batch_img_feature
 
-    def load_resource_for_video_indexes(self, inds):
+    def _load_resource_for_video_indexes(self, inds):
         vids = self._video_indexes[inds]
         frame_aggregate_strategy = self._frame_aggregate_strategy
         feature_path = self.feature_path
@@ -115,21 +135,23 @@ class FeatureCache:
 
             if frame_aggregate_strategy == 'average':
                 for vid in vids:
-                    video_feature = self.get_from_cache(vid, hf)
+                    video_feature = self._get_from_cache(vid, hf)
                     video_features.append(np.mean(video_feature, axis=0, keepdims=True))
             elif frame_aggregate_strategy == 'no_aggregation':
                 for vid in vids:
-                    video_feature = self.get_from_cache(vid, hf)
+                    video_feature = self._get_from_cache(vid, hf)
                     video_features.append(np.expand_dims(self._pad_video(video_feature), axis=0))
             else:
                 assert frame_aggregate_strategy == 'multi_instance'
                 # the _vid index is already duplicated
                 frame_to_use = self.frame_index_for_sub_instances[inds]
                 for f, vid in zip(frame_to_use, vids):
-                    video_feature = self.get_from_cache(vid, hf)
+                    video_feature = self._get_from_cache(vid, hf)
+                    # TODO remove ugly hack
                     video_feature = video_feature[:, :12, :]
                     video_features.append(np.expand_dims(video_feature[f], axis=0))
             video_features = np.array(np.concatenate(video_features, axis=0), dtype=np.float32)
+        # logger.info('cache hitting rate %d/%d' % (self.cache_hit, self.cache_visit))
         return video_features
 
     def __len__(self):
@@ -142,7 +164,7 @@ class VQADataSet(Sequence):
                  multi_label=True, is_test=False,
                  batch_size=128, len_q=15, len_video=None, seed=123, num_class=1000,
                  frame_aggregate_strategy='average',
-                 shuffle_data=True):
+                 shuffle_data=True, lazy_load=False):
 
         self.len_video = len_video
         self.is_test = is_test
@@ -197,10 +219,13 @@ class VQADataSet(Sequence):
         assert frame_aggregate_strategy in ['average', 'no_aggregation', 'multi_instance']
         self.num_instances, self.img_feature_shape, \
         self._len_sub_instances, frame_index_for_sub_instances = self._set_meta_data()
-        self.video_features = FeatureCache(frame_aggregate_strategy, self._video_indexes,
-                                           self._index_vid_map,
-                                           self.len_video, self.feature_path,
-                                           self.batch_size, frame_index_for_sub_instances)
+        self.video_features = FeatureCache(frame_aggregate_strategy=frame_aggregate_strategy,
+                                           video_indexes=self._video_indexes,
+                                           index_vid_map=self._index_vid_map,
+                                           len_video=self.len_video, feature_path=self.feature_path,
+                                           batch_size=self.batch_size,
+                                           frame_index_for_sub_instances=frame_index_for_sub_instances,
+                                           lazy_load=lazy_load)
         if self._frame_aggregate_strategy == 'multi_instance':
             self._handle_multi_instance()
 
@@ -254,12 +279,10 @@ class VQADataSet(Sequence):
 
                     frame_index_for_sub_instances.append(sorted(t[:len_video]))
                     len_sub_instances.append(len_video)
-        # TODO allow resetting frame index for each sub instances
         frame_index_for_sub_instances = np.concatenate(frame_index_for_sub_instances).ravel()
         return sum(len_sub_instances), video_feature_shape, len_sub_instances, frame_index_for_sub_instances
 
     def _set_meta_data(self):
-        # TODO efficient reading meta data
         meta_path = self.feature_path.replace('.h5', '.pkl')
         shapes = load(meta_path)
         len_sub_instances = []
@@ -289,7 +312,10 @@ class VQADataSet(Sequence):
                 if video_feature_shape is None:
                     video_feature_shape = tuple(video_feature_shape_raw[1:])
                 else:
-                    assert video_feature_shape == tuple(video_feature_shape_raw[1:])
+                    pass
+                    # assert video_feature_shape == tuple(video_feature_shape_raw[1:])
+                # TODO remove ugly hack
+                video_feature_shape = (12, video_feature_shape[1])
                 t = np.random.permutation(video_feature_shape_raw[0])
                 if self.len_video is None:
                     len_video = video_feature_shape_raw[0]
@@ -298,7 +324,7 @@ class VQADataSet(Sequence):
 
                 frame_index_for_sub_instances.append(sorted(t[:len_video]))
                 len_sub_instances.append(len_video)
-        # TODO allow resetting frame index for each sub instances
+        # TODO separate resetting frame index for each sub instances
         frame_index_for_sub_instances = np.concatenate(frame_index_for_sub_instances).ravel()
         return sum(len_sub_instances), video_feature_shape, len_sub_instances, frame_index_for_sub_instances
 
@@ -347,6 +373,9 @@ class VQADataSet(Sequence):
         # TODO  grouping questions of the same video and shuffle
         np.random.shuffle(self._indices)
         self.video_features.set_indices(self._indices)
+
+        _, _, _, frame_index_for_sub_instances = self._set_meta_data()
+        self.video_features.set_frame_index(frame_index_for_sub_instances)
 
     def eval_or_submit(self, predictions, output_path=None):
         assert self.is_test
