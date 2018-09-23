@@ -13,47 +13,19 @@ import tensorflow as tf
 from keras.backend.tensorflow_backend import set_session
 from tensorflow import set_random_seed
 import random
+from easydict import EasyDict as edict
 
 ex = Experiment('vqa')
 ex.observers.append(MongoObserver.create(url=mongo_url,
                                          db_name=mongo_db))
-
-
-@ex.config
-def cfg():
-    protocol = 'val'
-    num_repeat = 1
-    multi_label = True
-    num_class = 500  # num of candidate answers
-    len_q = 15  # length of question
-    batch_size = 128
-    test_batch_size = 128
-    epochs = 20
-    seed = 123
-    lazy_load = True
-    output_dir = 'out'
-    frame_aggregate_strategy = 'multi_instance'
-    if multi_label:
-        label_encoder_path = 'input/label_encoder_multi_' + str(num_class) + '.pkl'
-    else:
-        label_encoder_path = 'input/label_encoder_' + str(num_class) + '.pkl'
-    video_feature = 'faster_rcnn_10f'
-    train_resource_path = 'input/%s/tr.h5' % video_feature
-    test_resource_path = 'input/%s/te.h5' % video_feature
-    artifact_dir = 'out'
-    len_video = 2
-    model_params = {
-        'num_dense_image': 512
-    }
-    model_type = 'bottom-up-attention'
+ex.add_config('config.yaml')
 
 
 @ex.automain
-def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_batch_size, epochs, seed, output_dir,
-        artifact_dir,
-        label_encoder_path, frame_aggregate_strategy, train_resource_path, test_resource_path, len_video, model_params,
-        model_type, lazy_load):
+def run(protocol, num_repeat, data_opts, epochs, seed,
+        output_dir, artifact_dir, model_params, model_type):
     assert protocol in ['val', 'cv', 'submit', 'cv_submit']
+    # setting gpu memory limit
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     set_session(tf.Session(config=config))
@@ -62,7 +34,19 @@ def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_ba
     else:
         assert model_type == 'bottom-up-attention'
         model_func = get_bottom_up_attention_model
+    # extract data options
+    data_opts = edict(data_opts)
+    multi_label = data_opts.multi_label
+    video_feature = data_opts.video_feature
+    num_class=data_opts.num_class
+    train_resource_path = 'input/%s/tr.h5' % video_feature
+    test_resource_path = 'input/%s/te.h5' % video_feature
 
+    if multi_label:
+        label_encoder_path = 'input/label_encoder_multi_' + str(num_class) + '.pkl'
+    else:
+        label_encoder_path = 'input/label_encoder_' + str(num_class) + '.pkl'
+    # seeding
     np.random.seed(seed)
     random.seed(seed + 1)
     set_random_seed(seed + 2)
@@ -103,18 +87,19 @@ def run(protocol, num_repeat, multi_label, num_class, len_q, batch_size, test_ba
         # TODO eval blending predictions performance on cv
     predictions = []
     for raw_ds_tr, raw_ds_te in valid_iter:
-        ds_tr = VQADataSet(raw_ds_tr, multi_label=multi_label, len_q=len_q, num_class=num_class,
-                           batch_size=batch_size, feature_path=train_resource_path,
-                           label_encoder_path=label_encoder_path,
-                           frame_aggregate_strategy=frame_aggregate_strategy, len_video=len_video, lazy_load=lazy_load)
+        ds_tr = VQADataSet(raw_ds_tr, feature_path=train_resource_path, label_encoder_path=label_encoder_path,
+                           multi_label=data_opts.multi_label, len_q=data_opts.len_q, num_class=data_opts.num_class,
+                           frame_aggregate_strategy=data_opts.frame_aggregate_strategy, len_video=data_opts.len_video,
+                           batch_size=data_opts.batch_size, lazy_load=data_opts.lazy_load, seed=seed + 4)
 
         model = model_func(ds_tr, **model_params)
         model.fit_generator(ds_tr, epochs=epochs, )
         ds_tr.clear()
-        ds_te = VQADataSet(raw_ds_te, multi_label=multi_label, len_q=len_q, num_class=num_class,
-                           batch_size=test_batch_size, is_test=True, shuffle_data=False,
+        ds_te = VQADataSet(raw_ds_te, multi_label=data_opts.multi_label, len_q=data_opts.len_q,
+                           num_class=data_opts.num_class,
+                           batch_size=data_opts.test_batch_size, is_test=True, shuffle_data=False,
                            feature_path=test_resource_path, label_encoder_path=label_encoder_path,
-                           frame_aggregate_strategy=frame_aggregate_strategy, lazy_load=lazy_load)
+                           frame_aggregate_strategy=data_opts.frame_aggregate_strategy, lazy_load=data_opts.lazy_load)
         p_te = model.predict_generator(ds_te)
         predictions.append(p_te)
         if artifact_dir is not None:
