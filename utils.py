@@ -23,6 +23,7 @@ import h5py
 from  sklearn.preprocessing import LabelBinarizer, MultiLabelBinarizer
 from sklearn.model_selection import train_test_split, KFold
 from itertools import chain
+import joblib
 
 raw_dir = 'raw'
 raw_meta_train_path = raw_dir + '/train.txt'  # cleaned
@@ -221,7 +222,7 @@ def dump_meta_data(raw_path=raw_meta_train_path,
 
     new_data = pd.DataFrame(meta_data.iter_vqa_line(), columns=['video_id', 'question', 'answer'])
     video_ids_raw = new_data['video_id']
-
+    video_ids_raw = video_ids_raw.drop_duplicates().reset_index(drop=True)
     with h5py.File(feature_path, 'r+') as hf:
         for vid in video_ids_raw:
             video_feature_shape_raw = hf[vid][:].shape
@@ -229,6 +230,24 @@ def dump_meta_data(raw_path=raw_meta_train_path,
     output_path = feature_path.replace('.h5', '.pkl')
 
     save(shape, output_path)
+
+
+def limit_channel_width(raw_path=raw_meta_train_path,
+                        feature_path='input/faster_rcnn_10f/tr.h5', channel_width=12, ):
+    # TODO efficient reading meta data
+    meta_data = RawDataSet(raw_path)
+
+    new_data = pd.DataFrame(meta_data.iter_vqa_line(), columns=['video_id', 'question', 'answer'])
+    video_ids_raw = new_data['video_id']
+    video_ids_raw = video_ids_raw.drop_duplicates().reset_index(drop=True)
+    video_features = {}
+    with h5py.File(feature_path, 'r+') as hf:
+        for vid in video_ids_raw:
+            video_feature = hf[vid][:]
+            video_feature = video_feature[:, :channel_width, :].astype(np.float32)
+            video_features[vid] = video_feature
+    output_path = feature_path.replace('.h5', '_compact.pkl')
+    save(video_features, output_path, use_joblib=True)
 
 
 def count_freq(sent_list):
@@ -281,10 +300,12 @@ class CustomUnpickler(pickle.Unpickler):
         return super().find_class(module, name)
 
 
-def load(filename):
+def load(filename, use_joblib=False):
     print('loading from %s' % filename)
     if filename.endswith('.npy'):
         obj = np.load(filename)
+    elif use_joblib:
+        obj = joblib.load(filename)
     else:
         with gzip.open(filename, 'rb') as f:
             return CustomUnpickler(f).load()
@@ -292,10 +313,13 @@ def load(filename):
     return obj
 
 
-def save(obj, filename, save_npy=True):
+def save(obj, filename, save_npy=True, use_joblib=False):
     if type(obj) is np.ndarray and save_npy:
         np.save(filename, obj)
+    elif use_joblib:
+        joblib.dump(obj, filename, compress=3)
     else:
+
         with gzip.open(filename, 'wb') as f:
             pickle.dump(obj, file=f, protocol=0)
 
