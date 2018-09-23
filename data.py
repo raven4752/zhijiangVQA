@@ -324,8 +324,9 @@ class VQADataSet(Sequence):
 
                 frame_index_for_sub_instances.append(sorted(t[:len_video]))
                 len_sub_instances.append(len_video)
-        # TODO separate resetting frame index for each sub instances
-        frame_index_for_sub_instances = np.concatenate(frame_index_for_sub_instances).ravel()
+                # TODO separate resetting frame index for each sub instances
+        if len(frame_index_for_sub_instances) != 0:
+            frame_index_for_sub_instances = np.concatenate(frame_index_for_sub_instances).ravel()
         return sum(len_sub_instances), video_feature_shape, len_sub_instances, frame_index_for_sub_instances
 
     def _handle_multi_instance(self):
