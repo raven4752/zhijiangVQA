@@ -38,7 +38,7 @@ def run(protocol, num_repeat, data_opts, epochs, seed,
     data_opts = edict(data_opts)
     multi_label = data_opts.multi_label
     video_feature = data_opts.video_feature
-    num_class=data_opts.num_class
+    num_class = data_opts.num_class
     train_resource_path = 'input/%s/tr.h5' % video_feature
     test_resource_path = 'input/%s/te.h5' % video_feature
 
@@ -122,6 +122,10 @@ def run(protocol, num_repeat, data_opts, epochs, seed,
             std = results_arr.std()
             results.append(avg)
             results.append(std)
+            new_results = []
+            for r in results:
+                new_results.append('%.3f' % r)
+            results = new_results
     if protocol == 'cv_submit':
         # TODO support ensemble of different aggregation strategies
         predictions_total = np.zeros_like(predictions[0])
