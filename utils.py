@@ -241,8 +241,8 @@ def dump_meta_data(raw_path=raw_meta_train_path,
     save(shape, output_path)
 
 
-def limit_channel_width(raw_path=raw_meta_train_path,
-                        feature_path='input/faster_rcnn_10f/tr.h5', channel_width=12, ):
+def pickle_h5(raw_path=raw_meta_train_path,
+              feature_path='input/faster_rcnn_10f/tr.h5', channel_width=12, ):
     # TODO efficient reading meta data
     meta_data = RawDataSet(raw_path)
 
@@ -253,7 +253,11 @@ def limit_channel_width(raw_path=raw_meta_train_path,
     with h5py.File(feature_path, 'r+') as hf:
         for vid in video_ids_raw:
             video_feature = hf[vid][:]
-            video_feature = video_feature[:, :channel_width, :].astype(np.float32)
+            # TODO remove ugly hack
+            if len(video_feature.shape) == 3:
+                video_feature = video_feature[:, :channel_width, :].astype(np.float32)
+            else:
+                video_feature = video_feature.astype(np.float32)
             video_features[vid] = video_feature
     output_path = feature_path.replace('.h5', '_compact.pkl')
     save(video_features, output_path, use_joblib=True)
