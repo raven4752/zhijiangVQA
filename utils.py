@@ -24,6 +24,7 @@ from  sklearn.preprocessing import LabelBinarizer, MultiLabelBinarizer
 from sklearn.model_selection import train_test_split, KFold
 from itertools import chain
 import joblib
+from tabulate import tabulate
 
 raw_dir = 'raw'
 raw_meta_train_path = raw_dir + '/train.txt'  # cleaned
@@ -271,7 +272,7 @@ def count_freq(sent_list):
     return answer_map, num
 
 
-def report_freq(sent_list, min_freq=0, report_interval=100):
+def report_freq(sent_list, min_freq=0, report_interval=100, print_raw=True):
     answer_map, num = count_freq(sent_list)
     print('total %d' % num)
     sorted_x = sorted(answer_map.items(), key=operator.itemgetter(1), reverse=True)
@@ -279,7 +280,8 @@ def report_freq(sent_list, min_freq=0, report_interval=100):
     for (item, freq) in sorted_x:
         if freq > min_freq:
             filtered_x.append((item, freq))
-    print(filtered_x[:200])
+    if print_raw:
+        print(filtered_x[:200])
     count = 0
     for i in range(1, len(filtered_x) + 1):
 
@@ -518,12 +520,13 @@ def analyse(predictions_path):
     c_answers = list(e[2][0] for e in corrects)
     g_answers = []
     for e in errors:
-
         g_answers.extend(set(e[3]))
     print('wrong questions')
-    wqs = report_freq(w_questions, min_freq=3)
+    wqs = report_freq(w_questions, min_freq=3, print_raw=False)
+    print(tabulate(wqs))
     print('correct questions')
-    cqs = report_freq(c_questions, min_freq=3)
+    cqs = report_freq(c_questions, min_freq=3, print_raw=False)
+    print(tabulate(cqs))
     print('hard questions')
     merged = []
     c_questions = dict(cqs)
@@ -531,13 +534,15 @@ def analyse(predictions_path):
         if wq in c_questions:
             if fwq > c_questions[wq] + 10:
                 merged.append([wq, fwq, c_questions[wq]])
-    print(merged)
+        elif fwq > 10:
+            merged.append([wq, fwq, 0])
+    print(tabulate(merged, headers=['questions', 'freq in wrong', 'freq in correct'], tablefmt="pipe"))
     print('wrong answers')
-    report_freq(w_answers, min_freq=3)
+    print(tabulate(report_freq(w_answers, min_freq=4, print_raw=False)))
     print('correct answers')
-    report_freq(c_answers, min_freq=3)
+    print(tabulate(report_freq(c_answers, min_freq=4, print_raw=False)))
     print('hard answers')
-    report_freq(g_answers, min_freq=3)
+    print(tabulate(report_freq(g_answers, min_freq=4, print_raw=False), headers=['answer', 'freq']))
     return score
 
 
