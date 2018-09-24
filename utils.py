@@ -2,7 +2,7 @@
 import logging
 
 logging.getLogger('tensorflow').disabled = True
-
+import json
 import keras
 from keras.layers import Conv2D, MaxPooling2D, Flatten
 from keras.layers import Input, LSTM, Embedding, Dense
@@ -155,11 +155,13 @@ class RawDataSet:
                 else:
                     yield a
 
-    def eval_answers(self, raw_ds):
+    def eval_answers(self, raw_ds, debug=False):
         assert self.num_answer == 1
         assert self.get_num_questions_total() == raw_ds.get_num_questions_total()
         num_total = self.get_num_questions_total()
         num_acc = 0
+        errors = []
+        corrects = []
         for (vid1, q1, a), (vid2, q2, a2) in zip(self.iter_vqa_line(),
                                                  raw_ds.iter_vqa_line()):
             assert vid1 == vid2
@@ -167,7 +169,13 @@ class RawDataSet:
             assert len(a) == 1
             if a[0] in a2:
                 num_acc += 1
-        return num_acc / num_total
+                corrects.append([vid1, q1, a, a2])
+            else:
+                errors.append([vid1, q1, a, a2])
+        if not debug:
+            return num_acc / num_total
+        else:
+            return num_acc / num_total, errors, corrects
 
     def split_dev_val(self, val_size=0.1, seed=123):
         data_dev, data_val = train_test_split(self.data, test_size=val_size, random_state=seed)
@@ -263,16 +271,23 @@ def count_freq(sent_list):
     return answer_map, num
 
 
-def report_freq(sent_list):
+def report_freq(sent_list, min_freq=0, report_interval=100):
     answer_map, num = count_freq(sent_list)
+    print('total %d' % num)
     sorted_x = sorted(answer_map.items(), key=operator.itemgetter(1), reverse=True)
-    print(sorted_x[:200])
+    filtered_x = []
+    for (item, freq) in sorted_x:
+        if freq > min_freq:
+            filtered_x.append((item, freq))
+    print(filtered_x[:200])
     count = 0
-    for i in range(1, 1001):
+    for i in range(1, len(filtered_x) + 1):
 
-        count += sorted_x[i - 1][1]
-        if i % 100 == 0:
+        count += filtered_x[i - 1][1]
+        if i % report_interval == 0:
             print(i, count / num)
+    print(len(filtered_x), count / num)
+    return filtered_x
 
 
 def report_len(sent_list):
@@ -481,6 +496,49 @@ def blend(*predictions_paths, output_path=output_dir + '/blend.txt'):
         predictions.append(np.expand_dims(load(predictions_path), axis=0))
     predictions = np.mean(np.concatenate(predictions, axis=0), axis=0)
     return ds.eval_or_submit(predictions, output_path=output_path)
+
+
+def analyse(predictions_path):
+    ds = load(predictions_path.replace('.npy', '_ds.pkl'))
+    predictions = load(predictions_path)
+
+    num_question = ds.raw_data.num_question
+    predictions = ds.transform_multi_instance_prediction(predictions)
+    predictions = ds.label_encoder.inverse_transform(predictions)
+    assert len(predictions) % num_question == 0
+    df = ds.predictions_to_df(predictions, num_question)
+    raw_df = ds.raw_data
+    score, errors, corrects = RawDataSet(df, num_answer=1).eval_answers(raw_df, debug=True)
+    with open('errors.json', 'w', encoding='utf-8') as f:
+        json.dump(errors, f, indent=4, ensure_ascii=False)
+    # analyse errors
+    w_questions = list(e[1] for e in errors)
+    c_questions = list(e[1] for e in corrects)
+    w_answers = list(e[2][0] for e in errors)
+    c_answers = list(e[2][0] for e in corrects)
+    g_answers = []
+    for e in errors:
+
+        g_answers.extend(set(e[3]))
+    print('wrong questions')
+    wqs = report_freq(w_questions, min_freq=3)
+    print('correct questions')
+    cqs = report_freq(c_questions, min_freq=3)
+    print('hard questions')
+    merged = []
+    c_questions = dict(cqs)
+    for (wq, fwq) in wqs:
+        if wq in c_questions:
+            if fwq > c_questions[wq] + 10:
+                merged.append([wq, fwq, c_questions[wq]])
+    print(merged)
+    print('wrong answers')
+    report_freq(w_answers, min_freq=3)
+    print('correct answers')
+    report_freq(c_answers, min_freq=3)
+    print('hard answers')
+    report_freq(g_answers, min_freq=3)
+    return score
 
 
 if __name__ == '__main__':
