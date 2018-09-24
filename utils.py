@@ -36,7 +36,6 @@ raw_val_path = raw_dir + '/val.txt'
 column_vid = 'video_id'
 mongo_url = '114.212.84.12:27017'
 mongo_db = 'MY_DB'
-output_dir = 'out'
 
 
 def check_data():
@@ -488,7 +487,7 @@ def eval_blend(*predictions_paths):
     return score
 
 
-def blend(*predictions_paths, output_path=output_dir + '/blend.txt'):
+def blend(*predictions_paths, output_path= 'blend.txt'):
     # load data set
     ds = None
     for predictions_path in predictions_paths:
