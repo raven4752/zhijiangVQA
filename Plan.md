@@ -16,7 +16,30 @@
 2. 该问题之前缺少研究结果。最相似的问题包括 Visual Qustion Answer, Video Classification 。
 3. 视频数量虽然少， 但是帧数长，由于显存限制，难以直接建模为3D输入。
 4. 视频和问题提取出的特征相差甚远，难以混合。
+## 坏结果分析
 
+分析转为n类候选答案+multi-instance visual question answer的模型的预测结果(acc~=0.50)：
+
+| questions                                   |   freq in wrong |   freq in correct |
+|:--------------------------------------------|----------------:|------------------:|
+| what is in the video                        |             153 |                88 |
+| what is the person in the video doing       |             110 |                28 |
+| what is the person doing in the video       |             103 |                22 |
+| what is the man doing in the video          |              45 |                10 |
+| what is the man in the video doing          |              35 |                 6 |
+| what is the person doing in video           |              28 |                 7 |
+| what is the woman in the video doing        |              18 |                 4 |
+| what is in front of the person in the video |              14 |                 0 |
+| what can you see in the video               |              13 |                 0 |
+| what is the person in video doing           |              13 |                 0 |
+| what is the man doing                       |              11 |                 0 |
+
+
+
+上表列出了在错误回答中各出现至少4次，且错误回答数目比正确回答多10次以上的问题。
+显然可以看出只看一帧的模型很难回答“做什么”的问题
+
+同时，怀疑答案编码存在一些问题，很多二元组也没有回答对
 ## 解决方案
 1. 问题建模。原始问题不能直接处理，需要进行转换。
     -[x] 转换为n(1000)类候选答案
