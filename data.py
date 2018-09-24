@@ -104,7 +104,8 @@ class FeatureCache:
                     video_feature = self._get_from_cache(vid, hf)
                     # assert len(video_feature.shape) == 2
                     # TODO remove ugly hack
-                    video_feature = video_feature[:, :12, :]
+                    if len(video_feature.shape) == 3:
+                        video_feature = video_feature[:, :12, :]
                     if self.len_video is None:
                         len_video = video_feature.shape[0]
                     else:
@@ -148,7 +149,8 @@ class FeatureCache:
                 for f, vid in zip(frame_to_use, vids):
                     video_feature = self._get_from_cache(vid, hf)
                     # TODO remove ugly hack
-                    video_feature = video_feature[:, :12, :]
+                    if len(video_feature.shape) == 3:
+                        video_feature = video_feature[:, :12, :]
                     video_features.append(np.expand_dims(video_feature[f], axis=0))
             video_features = np.array(np.concatenate(video_features, axis=0), dtype=np.float32)
         # logger.info('cache hitting rate %d/%d' % (self.cache_hit, self.cache_visit))
@@ -315,7 +317,8 @@ class VQADataSet(Sequence):
                     pass
                     # assert video_feature_shape == tuple(video_feature_shape_raw[1:])
                 # TODO remove ugly hack
-                video_feature_shape = (12, video_feature_shape[1])
+                if len(video_feature_shape) == 3:
+                    video_feature_shape = (12, video_feature_shape[1])
                 t = np.random.permutation(video_feature_shape_raw[0])
                 if self.len_video is None:
                     len_video = video_feature_shape_raw[0]
