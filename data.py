@@ -378,10 +378,7 @@ class VQADataSet(Sequence):
         _, _, _, frame_index_for_sub_instances = self._set_meta_data()
         self.video_features.set_frame_index(frame_index_for_sub_instances)
 
-    def eval_or_submit(self, predictions, output_path=None):
-        assert self.is_test
-        assert not self.shuffle_data
-        num_question = self.raw_data.num_question
+    def transform_multi_instance_prediction(self, predictions):
         if self._frame_aggregate_strategy == 'multi_instance':
             # turn predictions of sub instances into predictions of instances
             new_predictions = np.empty([len(self._video_ids_raw), predictions.shape[1]])
@@ -390,10 +387,11 @@ class VQADataSet(Sequence):
                 predictions_sub = predictions[index:index + len_sub_instance]
                 new_predictions[i] = np.mean(predictions_sub, axis=0)
                 index += len_sub_instance
-            predictions = self.label_encoder.inverse_transform(new_predictions)
+            return new_predictions
         else:
-            predictions = self.label_encoder.inverse_transform(predictions)
-        assert len(predictions) % num_question == 0
+            return predictions
+
+    def predictions_to_df(self, predictions, num_question):
         data_to_submit = []
         for i in range(0, len(predictions), num_question):
             vid = self._video_ids_raw[i]
@@ -405,6 +403,16 @@ class VQADataSet(Sequence):
                 data_to_submit_i.append(pj)
             data_to_submit.append(data_to_submit_i)
         df = pd.DataFrame(data_to_submit)
+        return df
+
+    def eval_or_submit(self, predictions, output_path=None):
+        assert self.is_test
+        assert not self.shuffle_data
+        num_question = self.raw_data.num_question
+        predictions = self.transform_multi_instance_prediction(predictions)
+        predictions = self.label_encoder.inverse_transform(predictions)
+        assert len(predictions) % num_question == 0
+        df = self.predictions_to_df(predictions, num_question=num_question)
         if output_path is not None:
             df.to_csv(output_path, header=None, index=False, encoding='utf-8')
             df = df.sample(frac=0.05, random_state=self.seed)  # for checking
