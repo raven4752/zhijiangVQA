@@ -278,14 +278,14 @@ def get_bottom_up_attention_model(vqa_tr, num_hidden=512):
     return model
 
 
-def get_baseline_model(vqa_tr, num_dense_image=128):
+def get_baseline_model(vqa_tr, num_hidden=512):
     embedding = load('input/glove.840B.300d.npy')
-    num_rnn_unit = int(num_dense_image / 2)
+    num_rnn_unit = int(num_hidden / 2)
     shape_image = vqa_tr.img_feature_shape
     input_image = Input(shape_image)
     # feature_image = BatchNormalization(input_shape=shape_image)(input_image)
     feature_image = Dropout(0.5, input_shape=shape_image)(input_image)
-    feature_image_t = Dense(num_dense_image, activation='tanh')(feature_image)
+    feature_image_t = Dense(num_hidden, activation='tanh')(feature_image)
     # gate_image = Dense(num_dense_image, activation='sigmoid')(feature_image)
     # feature_image = multiply([feature_image_t, gate_image])
     feature_image = feature_image_t
@@ -301,7 +301,7 @@ def get_baseline_model(vqa_tr, num_dense_image=128):
     feature = concatenate(
         [feature_image, feature_q, multiply([feature_image, feature_q]), subtract([feature_image, feature_q])])
     feature_res = Dropout(0.5)(feature)
-    feature_res_t = (Dense(num_dense_image * 4, activation='tanh'))(feature_res)
+    feature_res_t = (Dense(num_hidden * 4, activation='tanh'))(feature_res)
     # gate_res = Dense(256, activation='sigmoid')(feature_res)
     # feature_res = multiply([gate_res, feature_res_t])
     feature_res = feature_res_t
