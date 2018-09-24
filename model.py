@@ -216,6 +216,41 @@ def gen_feature():
     generate_feature_single('test_pic', 'input/test.txt', 'input/te.h5')
 
 
+def get_attention_model(vqa_tr, num_hidden=512):
+    embedding = load('input/glove.840B.300d.npy')
+    num_rnn_unit = int(num_hidden / 2)
+    shape_question = (vqa_tr.len_q,)
+    input_question = Input(shape_question)
+    embed1c = Embedding(embedding.shape[0], embedding.shape[1], weights=[embedding],
+                        trainable=False, input_shape=shape_question)
+    feature_q = embed1c(input_question)
+    feature_q = SpatialDropout1D(0.2)(feature_q)
+    feature_q = Bidirectional(CuDNNLSTM(num_rnn_unit))(
+        feature_q)
+    shape_image = vqa_tr.img_feature_shape
+    assert len(shape_image) == 2
+    input_image = Input(shape_image)
+    feature_image = BatchNormalization(input_shape=shape_image)(input_image)
+    feature_image = SpatialDropout1D(0.5, input_shape=shape_image)(feature_image)
+    feature_q_r = RepeatVector(shape_image[0])(feature_q)
+    feature_merge = concatenate([feature_q_r, feature_image], axis=-1)
+    feature_merge_att = KVAttention(shape_image[0])([feature_merge, feature_image])
+    feature_image_t = Dense(num_hidden, activation='tanh')(feature_merge_att)
+    feature = multiply([feature_image_t, feature_q])
+    feature_res = Dropout(0.5)(feature)
+    gate_res = Dense(num_hidden, activation='sigmoid')(feature_res)
+    feature = multiply([gate_res, feature_res])
+    if vqa_tr.multi_label:
+        activation = 'sigmoid'
+    else:
+        activation = 'softmax'
+    out = Dense(vqa_tr.num_target, activation=activation)(feature)
+    model = Model(inputs=[input_image, input_question], outputs=out)
+    model.compile('adam', loss=categorical_crossentropy)
+    model.summary()
+    return model
+
+
 def get_bottom_up_attention_model(vqa_tr, num_hidden=512):
     embedding = load('input/glove.840B.300d.npy')
     num_rnn_unit = int(num_hidden / 2)
@@ -259,7 +294,7 @@ def get_bottom_up_attention_model(vqa_tr, num_hidden=512):
     # gate_res = Dense(num_dense_image, activation='sigmoid')(feature_res)
     # feature_res = multiply([gate_res, feature_res])
     # feature_res = feature_res_t
-    feature = feature_res
+    feature = Dense(num_hidden, activation='relu')(feature_res)
     # feature = add([feature, feature_res])
     # feature =feature_image
     # feature = concatenate(
