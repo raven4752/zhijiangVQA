@@ -317,7 +317,7 @@ class VQADataSet(Sequence):
                     pass
                     # assert video_feature_shape == tuple(video_feature_shape_raw[1:])
                 # TODO remove ugly hack
-                if len(video_feature_shape) == 3:
+                if len(video_feature_shape) == 2:
                     video_feature_shape = (12, video_feature_shape[1])
                 t = np.random.permutation(video_feature_shape_raw[0])
                 if self.len_video is None:
