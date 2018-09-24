@@ -140,12 +140,14 @@ class NewKVAttention(Layer):
     def call(self, x, mask=None, training=None):
         #  W^T q * W^T k
         q, k, v = x
+        q = self._dropout(q)
+        k = self._dropout(k)
         q_embedded = K.tanh(K.dot(q, self.Wq))
         q_embedded = K.expand_dims(q_embedded, axis=1)
         k_embedded = K.tanh(K.dot(k, self.Wk))
         joined_repr = q_embedded * k_embedded
-        #joined_repr = self._dropout(joined_repr)
-        joined_repr = K.dropout(joined_repr, level=self.drop_out)
+        # joined_repr = self._dropout(joined_repr)
+        # joined_repr = K.dropout(joined_repr, level=self.drop_out)
         joined_repr = (K.dot(joined_repr, self.W))
         if self.bias:
             joined_repr += self.b
