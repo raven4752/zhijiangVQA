@@ -66,9 +66,17 @@ def run(protocol, num_repeat, data_opts, epochs, seed,
     if not eval:
         raw_ds_te = RawDataSet(data_path=raw_meta_test_path)
         output_path = os.path.join(output_dir, out_file_name + '.txt')
-
     else:
         test_resource_path = train_resource_path
+
+    if protocol == 'cv_val':
+        cache_path = train_resource_path.replace('.h5', '_compact.pkl')
+        if os.path.exists(cache_path):
+            cached_dict = load(cache_path, use_joblib=True)
+        else:
+            cached_dict = None
+    else:
+        cached_dict = None
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
@@ -105,7 +113,8 @@ def run(protocol, num_repeat, data_opts, epochs, seed,
                                num_class=data_opts.num_class,
                                batch_size=data_opts.test_batch_size, is_test=True, shuffle_data=False,
                                feature_path=test_resource_path, label_encoder_path=label_encoder_path,
-                               frame_aggregate_strategy=data_opts.frame_aggregate_strategy, lazy_load=data_opts.lazy_load)
+                               frame_aggregate_strategy=data_opts.frame_aggregate_strategy,
+                               lazy_load=data_opts.lazy_load)
             p_te = model.predict_generator(ds_te)
             ds_te.clear()
             if artifact_dir is not None:
@@ -117,31 +126,35 @@ def run(protocol, num_repeat, data_opts, epochs, seed,
             results.append(score)
         else:
             predictions = []
+            if protocol == 'cv_submit':
+                cached_dict = None
             ds_te = VQADataSet(raw_ds_te, multi_label=data_opts.multi_label, len_q=data_opts.len_q,
                                num_class=data_opts.num_class,
                                batch_size=data_opts.test_batch_size, is_test=True, shuffle_data=False,
                                feature_path=test_resource_path, label_encoder_path=label_encoder_path,
                                frame_aggregate_strategy=data_opts.frame_aggregate_strategy,
-                               lazy_load=data_opts.lazy_load)
+                               lazy_load=data_opts.lazy_load, cached_dict=cached_dict)
+
             for raw_ds_dev in raw_ds_tr.cv_iter(seed=seed + 233, num_repeat=10, yield_test_set=False):
                 ds_tr = VQADataSet(raw_ds_dev, feature_path=train_resource_path, label_encoder_path=label_encoder_path,
                                    multi_label=data_opts.multi_label, len_q=data_opts.len_q,
                                    num_class=data_opts.num_class,
                                    frame_aggregate_strategy=data_opts.frame_aggregate_strategy,
                                    len_video=data_opts.len_video,
-                                   batch_size=data_opts.batch_size, lazy_load=data_opts.lazy_load, seed=seed + 6 + i)
-
+                                   batch_size=data_opts.batch_size, lazy_load=data_opts.lazy_load, seed=seed + 6 + i,
+                                   cached_dict=cached_dict)
                 model = model_func(ds_tr, **model_params)
                 model.fit_generator(ds_tr, epochs=epochs, )
                 ds_tr.clear()
                 p_te = model.predict_generator(ds_te)
+                p_te = ds_te.transform_multi_instance_prediction(p_te)
                 predictions.append(p_te)
 
             predictions_total = np.zeros_like(predictions[0])
             for p in predictions:
                 predictions_total += p
             predictions_total /= len(predictions)
-            results = ds_te.eval_or_submit(predictions_total, output_path=output_path)
+            results.append(ds_te.eval_or_submit(predictions_total, output_path=output_path, transformed=True))
             ds_te.clear()
             if artifact_dir is not None:
                 # TODO handle artifact saving in cv
@@ -149,7 +162,7 @@ def run(protocol, num_repeat, data_opts, epochs, seed,
                 output_path_ds = os.path.join(output_dir, out_file_name + '_ds.pkl')
                 save(predictions_total, output_path_raw_prediction)
                 save(ds_te, output_path_ds)
-        # load data set
+                # load data set
 
     if len(results) == 1:
         results = results[0]
