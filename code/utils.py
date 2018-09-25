@@ -26,16 +26,16 @@ from itertools import chain
 import joblib
 from tabulate import tabulate
 
-raw_dir = 'raw'
+raw_dir = '../data'
+input_dir = '../input'
 raw_meta_train_path = raw_dir + '/train.txt'  # cleaned
 raw_meta_test_path = raw_dir + '/test.txt'
 raw_train_video_path = raw_dir + '/train'
 raw_test_video_path = raw_dir + '/test'
 raw_dev_path = raw_dir + '/dev.txt'
 raw_val_path = raw_dir + '/val.txt'
-column_vid = 'video_id'
-mongo_url = '114.212.84.12:27017'
-mongo_db = 'MY_DB'
+mongo_url = None
+mongo_db = None
 
 
 def check_data():
@@ -223,7 +223,7 @@ def eval_submits(prediction_path, target_path=raw_val_path):
 
 
 def dump_meta_data(raw_path=raw_meta_train_path,
-                   feature_path='input/faster_rcnn_10f/tr.h5'):
+                   feature_path=os.path.join(input_dir, 'faster_rcnn_10f/tr.h5')):
     # TODO efficient reading meta data
     shape = {}
     meta_data = RawDataSet(raw_path)
@@ -241,7 +241,7 @@ def dump_meta_data(raw_path=raw_meta_train_path,
 
 
 def pickle_h5(raw_path=raw_meta_train_path,
-              feature_path='input/faster_rcnn_10f/tr.h5', channel_width=12, ):
+              feature_path=os.path.join(input_dir, 'faster_rcnn_10f/tr.h5'), channel_width=12, ):
     # TODO efficient reading meta data
     meta_data = RawDataSet(raw_path)
 
@@ -344,7 +344,8 @@ def save(obj, filename, save_npy=True, use_joblib=False):
             pickle.dump(obj, file=f, protocol=0)
 
 
-def fit_tokenizer(train_path=raw_meta_train_path, test_path=raw_meta_test_path, output_path='input/tok.pkl'):
+def fit_tokenizer(train_path=raw_meta_train_path, test_path=raw_meta_test_path,
+                  output_path=os.path.join(input_dir, 'tok.pkl')):
     ds_tr = RawDataSet(train_path)
     ds_te = RawDataSet(test_path)
 
@@ -383,8 +384,8 @@ def read_embedding(embedding_file):
     return embeddings_index, embedding_size
 
 
-def embedding2numpy(embedding_path='input/glove.840B.300d.txt', tok_path='input/tok.pkl',
-                    ):
+def embedding2numpy(embedding_path=os.path.join(input_dir,'glove.840B.300d.txt')
+                    , tok_path=os.path.join(input_dir, 'tok.pkl')):
     output_path = embedding_path.replace('txt', 'npy')
     embedding_index, embedding_size = read_embedding(embedding_path)
     tok = load(tok_path)
@@ -406,7 +407,7 @@ def embedding2numpy(embedding_path='input/glove.840B.300d.txt', tok_path='input/
     save(embedding_matrix, output_path, save_npy=True)
 
 
-def fit_encoder(train_path=raw_meta_train_path, output_path='input/label_encoder.pkl', num_class=1000,
+def fit_encoder(train_path=raw_meta_train_path, output_path=os.path.join(input_dir,'label_encoder.pkl'), num_class=500,
                 multi_label=True, unknown_answer='idontknow'):
     df_tr = RawDataSet(train_path)
     answer_tr = df_tr.iter_vqa_pair()
@@ -487,7 +488,7 @@ def eval_blend(*predictions_paths):
     return score
 
 
-def blend(*predictions_paths, output_path= 'blend.txt'):
+def blend(*predictions_paths, output_path='blend.txt'):
     # load data set
     ds = None
     for predictions_path in predictions_paths:

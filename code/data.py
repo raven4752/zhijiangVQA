@@ -1,16 +1,13 @@
+import gc
+import logging
+import os
 import h5py
 import numpy as np
 import pandas as pd
-from keras.callbacks import Callback
 from keras.preprocessing.sequence import pad_sequences
 from keras.utils import Sequence
-from sklearn.utils import shuffle
-import random
-from utils import load, RawDataSet, raw_meta_train_path, raw_meta_test_path, save
-import traceback
-import gc
-import os
-import logging
+
+from utils import load, RawDataSet, input_dir
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s : %(levelname)s : %(message)s')
 logger = logging.getLogger(__name__)
@@ -166,11 +163,11 @@ class FeatureCache:
 
 class VQADataSet(Sequence):
     def __init__(self, raw_ds, feature_path,
-                 tok_path='input/tok.pkl', label_encoder_path='input/label_encoder.pkl',
+                 tok_path, label_encoder_path,
                  multi_label=True, is_test=False,
                  batch_size=128, len_q=15, len_video=None, seed=123, num_class=1000,
                  frame_aggregate_strategy='average',
-                 shuffle_data=True, lazy_load=False,cached_dict=None):
+                 shuffle_data=True, lazy_load=False, cached_dict=None):
 
         self.len_video = len_video
         self.is_test = is_test
@@ -231,7 +228,7 @@ class VQADataSet(Sequence):
                                            len_video=self.len_video, feature_path=self.feature_path,
                                            batch_size=self.batch_size,
                                            frame_index_for_sub_instances=frame_index_for_sub_instances,
-                                           lazy_load=lazy_load,cached_dict=cached_dict)
+                                           lazy_load=lazy_load, cached_dict=cached_dict)
         if self._frame_aggregate_strategy == 'multi_instance':
             self._handle_multi_instance()
 
@@ -433,25 +430,3 @@ class VQADataSet(Sequence):
         self._answers = None
         self._questions = None
         gc.collect()
-
-
-if __name__ == '__main__':
-    seed = 123
-    np.random.seed(seed)
-    random.seed(seed + 1)
-    video_feature_dir = 'faster_rcnn_10f'
-    train_resource_path = 'input/%s/tr.h5' % video_feature_dir
-    test_resource_path = 'input/%s/te.h5' % video_feature_dir
-    label_encoder_path = 'input/label_encoder_multi_1000.pkl'
-    raw_ds_tr = RawDataSet(data_path=raw_meta_train_path)
-    ds = VQADataSet(raw_ds_tr, label_encoder_path=label_encoder_path, len_video=2,
-                    frame_aggregate_strategy='multi_instance', feature_path=train_resource_path, shuffle_data=True,
-                    is_test=False)
-    save(ds[0], 'batch_0_tr.pkl')
-    save(ds[len(ds) - 1], 'batch_last_tr.pkl')
-    ds.clear()
-    # raw_ds_te = RawDataSet(data_path=raw_meta_test_path)
-    # ds = VQADataSet(raw_ds_te, label_encoder_path=label_encoder_path, frame_aggregate_strategy='multi_instance',
-    #               feature_path=test_resource_path, shuffle_data=False, is_test=True)
-    # save(ds[0], 'batch_0_te.pkl')
-    # save(ds[len(ds) - 1], 'batch_last_te.pkl')
