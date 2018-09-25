@@ -177,16 +177,16 @@ class RawDataSet:
         else:
             return num_acc / num_total, errors, corrects
 
-    def split_dev_val(self, val_size=0.1, seed=123):
+    def split_dev_val(self, val_size=0.1, seed=None):
         data_dev, data_val = train_test_split(self.data, test_size=val_size, random_state=seed)
         return RawDataSet(data_dev, self.num_question, self.num_answer), RawDataSet(data_val, self.num_question,
                                                                                     self.num_answer)
 
-    def split_dev_val_iter(self, val_size=0.1, seed=123, num_repeat=1):
+    def split_dev_val_iter(self, val_size=0.1, seed=None, num_repeat=1):
         for i in range(num_repeat):
-            yield self.split_dev_val(val_size, seed + i)
+            yield self.split_dev_val(val_size, seed=seed)
 
-    def cv_iter(self, num_repeat=10, seed=123, yield_test_set=True):
+    def cv_iter(self, num_repeat=10, seed=None, yield_test_set=True):
         kfold = KFold(num_repeat, shuffle=True, random_state=seed)
         for tr_index, te_index in kfold.split(self.data):
             data_tr = self.data.iloc[tr_index].reset_index(drop=True)
@@ -197,18 +197,18 @@ class RawDataSet:
             else:
                 yield RawDataSet(data_tr, self.num_question, self.num_answer)
 
-    def shuffle(self, seed=123):
+    def shuffle(self, seed=None):
         self.data = self.data.sample(frac=1.0, random_state=seed).reset_index(drop=True)
 
 
 def dev_val_split_raw(data_path=raw_meta_train_path, val_size=0.1, dev_path=raw_dev_path,
-                      val_path=raw_val_path, seed=233):
+                      val_path=raw_val_path, seed=None):
     """
     split raw meta data into dev set and val set
     :return:
     """
     data = pd.read_csv(data_path, header=None)
-    data_dev, data_val = train_test_split(data, test_size=val_size, random_state=seed)
+    data_dev, data_val = train_test_split(data, test_size=val_size, random_state=None)
     data_dev.to_csv(dev_path, index=False, header=None, encoding='utf-8')
     data_val.to_csv(val_path, index=False, header=None, encoding='utf-8')
 
