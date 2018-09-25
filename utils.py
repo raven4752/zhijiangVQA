@@ -189,8 +189,8 @@ class RawDataSet:
     def cv_iter(self, num_repeat=10, seed=123, yield_test_set=True):
         kfold = KFold(num_repeat, shuffle=True, random_state=seed)
         for tr_index, te_index in kfold.split(self.data):
-            data_tr = self.data.loc[tr_index]
-            data_te = self.data.loc[te_index]
+            data_tr = self.data.iloc[tr_index].reset_index(drop=True)
+            data_te = self.data.iloc[te_index].reset_index(drop=True)
             if yield_test_set:
                 yield RawDataSet(data_tr, self.num_question, self.num_answer), RawDataSet(data_te, self.num_question,
                                                                                           self.num_answer)
