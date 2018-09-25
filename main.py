@@ -49,7 +49,7 @@ def run(protocol, num_repeat, data_opts, epochs, seed,
     else:
         label_encoder_path = 'input/label_encoder_' + str(num_class) + '.pkl'
     # seeding
-    # TODO refactor seeding. free some seed
+    # TODO refactor training process to support training ensembles
     np.random.seed(seed)
     random.seed(seed + 1)
     set_random_seed(seed + 2)
@@ -69,7 +69,7 @@ def run(protocol, num_repeat, data_opts, epochs, seed,
     else:
         test_resource_path = train_resource_path
 
-    if protocol == 'cv_val':
+    if protocol == 'cv_val' or protocol == 'cv_submit':
         cache_path = train_resource_path.replace('.h5', '_compact.pkl')
         if os.path.exists(cache_path):
             cached_dict = load(cache_path, use_joblib=True)
@@ -82,21 +82,17 @@ def run(protocol, num_repeat, data_opts, epochs, seed,
         os.mkdir(output_dir)
     if not os.path.exists(artifact_dir):
         os.mkdir(artifact_dir)
-    if protocol == 'submit':
+    if protocol == 'submit' or protocol == 'cv_submit':
 
         def single_iter():
             yield raw_ds_tr, raw_ds_te
 
         valid_iter = single_iter()
-    elif protocol == 'val':
-        valid_iter = raw_ds_tr.split_dev_val_iter(seed=seed + 5, num_repeat=num_repeat)
-    elif protocol == 'cv_submit':
-        valid_iter = raw_ds_tr.cv_iter(seed=seed + 5, num_repeat=num_repeat, yield_test_set=False)
-        valid_iter = ((tr, raw_ds_te) for tr in valid_iter)
-    elif protocol == 'cv_val':
-        valid_iter = raw_ds_tr.split_dev_val_iter(seed=seed + 5, num_repeat=num_repeat)
+    elif protocol == 'val' or protocol == 'cv_val':
+        valid_iter = raw_ds_tr.split_dev_val_iter(num_repeat=num_repeat)
     else:
-        valid_iter = raw_ds_tr.cv_iter(seed=seed + 5, num_repeat=num_repeat)
+        assert protocol == 'cv'
+        valid_iter = raw_ds_tr.cv_iter(num_repeat=num_repeat)
         # TODO eval blending predictions performance on cv
     for i, (raw_ds_tr, raw_ds_te) in enumerate(valid_iter):
         if protocol not in ['cv_submit', 'cv_val']:
@@ -127,13 +123,15 @@ def run(protocol, num_repeat, data_opts, epochs, seed,
         else:
             predictions = []
             if protocol == 'cv_submit':
-                cached_dict = None
+                cached_dict_te = None
+            else:
+                cached_dict_te = cached_dict
             ds_te = VQADataSet(raw_ds_te, multi_label=data_opts.multi_label, len_q=data_opts.len_q,
                                num_class=data_opts.num_class,
                                batch_size=data_opts.test_batch_size, is_test=True, shuffle_data=False,
                                feature_path=test_resource_path, label_encoder_path=label_encoder_path,
                                frame_aggregate_strategy=data_opts.frame_aggregate_strategy,
-                               lazy_load=data_opts.lazy_load, cached_dict=cached_dict)
+                               lazy_load=data_opts.lazy_load, cached_dict=cached_dict_te)
 
             for raw_ds_dev in raw_ds_tr.cv_iter(seed=seed + 233, num_repeat=10, yield_test_set=False):
                 ds_tr = VQADataSet(raw_ds_dev, feature_path=train_resource_path, label_encoder_path=label_encoder_path,
@@ -149,13 +147,13 @@ def run(protocol, num_repeat, data_opts, epochs, seed,
                 p_te = model.predict_generator(ds_te)
                 p_te = ds_te.transform_multi_instance_prediction(p_te)
                 predictions.append(p_te)
+            ds_te.clear()
 
             predictions_total = np.zeros_like(predictions[0])
             for p in predictions:
                 predictions_total += p
             predictions_total /= len(predictions)
             results.append(ds_te.eval_or_submit(predictions_total, output_path=output_path, transformed=True))
-            ds_te.clear()
             if artifact_dir is not None:
                 # TODO handle artifact saving in cv
                 output_path_raw_prediction = os.path.join(artifact_dir, out_file_name + '.npy')
