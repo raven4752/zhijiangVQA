@@ -20,7 +20,7 @@ class FeatureCache:
     def __init__(self, frame_aggregate_strategy, video_indexes, index_vid_map,
                  len_video,
                  feature_path, batch_size, frame_index_for_sub_instances,
-                 lazy_load=False, max_cache_size=4500):
+                 lazy_load=False, max_cache_size=4500, cached_dict=None):
         self.seen_vid_feature_map = {}
 
         self.max_cache_size = max_cache_size
@@ -40,10 +40,14 @@ class FeatureCache:
             self.max_cache_size = 1
             self._load_resource()
         else:
-            cache_path = self.feature_path.replace('.h5', '_compact.pkl')
-            if os.path.exists(cache_path):
-                self.seen_vid_feature_map = load(cache_path, use_joblib=True)
+            if cached_dict is not None:
+                self.seen_vid_feature_map = cached_dict
                 self.max_cache_size = len(self.seen_vid_feature_map)
+            else:
+                cache_path = self.feature_path.replace('.h5', '_compact.pkl')
+                if os.path.exists(cache_path):
+                    self.seen_vid_feature_map = load(cache_path, use_joblib=True)
+                    self.max_cache_size = len(self.seen_vid_feature_map)
 
     def set_frame_index(self, frame_index_for_sub_instances):
         self.frame_index_for_sub_instances = frame_index_for_sub_instances
@@ -166,7 +170,7 @@ class VQADataSet(Sequence):
                  multi_label=True, is_test=False,
                  batch_size=128, len_q=15, len_video=None, seed=123, num_class=1000,
                  frame_aggregate_strategy='average',
-                 shuffle_data=True, lazy_load=False):
+                 shuffle_data=True, lazy_load=False,cached_dict=None):
 
         self.len_video = len_video
         self.is_test = is_test
@@ -227,7 +231,7 @@ class VQADataSet(Sequence):
                                            len_video=self.len_video, feature_path=self.feature_path,
                                            batch_size=self.batch_size,
                                            frame_index_for_sub_instances=frame_index_for_sub_instances,
-                                           lazy_load=lazy_load)
+                                           lazy_load=lazy_load,cached_dict=cached_dict)
         if self._frame_aggregate_strategy == 'multi_instance':
             self._handle_multi_instance()
 
@@ -408,11 +412,12 @@ class VQADataSet(Sequence):
         df = pd.DataFrame(data_to_submit)
         return df
 
-    def eval_or_submit(self, predictions, output_path=None):
+    def eval_or_submit(self, predictions, output_path=None, transformed=False):
         assert self.is_test
         assert not self.shuffle_data
         num_question = self.raw_data.num_question
-        predictions = self.transform_multi_instance_prediction(predictions)
+        if not transformed:
+            predictions = self.transform_multi_instance_prediction(predictions)
         predictions = self.label_encoder.inverse_transform(predictions)
         assert len(predictions) % num_question == 0
         df = self.predictions_to_df(predictions, num_question=num_question)
