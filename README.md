@@ -1,6 +1,6 @@
-#2018之江杯全球人工智能大赛 ：视频识别比赛11名解决方案
-
-##依赖环境
+# 2018之江杯全球人工智能大赛 ：视频识别比赛11名解决方案
+问题分析见Plan.md
+## 依赖环境
 1. ubuntu 16.04 python3.5, 如遇到opencv相关错误，执行
 
 
@@ -8,7 +8,7 @@
 
 2. python package 见requirements.txt
 3. CUDA 版本为9.0 , cudnn 版本为7.0.5
-##预训练模型
+## 预训练模型
 我使用了https://github.com/peteanderson80/bottom-up-attention 这个项目的预训练模型生成特征。
 如要复现该过程，请按照 https://github.com/peteanderson80/bottom-up-attention 中作者的说明配置环境，再
 
@@ -16,7 +16,7 @@
 再将该项目放于根目录中，并用我提供的文件覆盖原文件。再进入目录执行 repeat.sh 。可能需要较多显存。
 
 
-##结果复现说明
+## 结果复现说明
 1. 下载预训练的glove词向量
 
 
@@ -62,5 +62,5 @@
     cd ..
 
 生成的预测结果在submit文件夹下。
-##模型结构
+## 模型结构
 见code/model.py
