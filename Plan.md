@@ -1,4 +1,4 @@
-#2018之江杯全球人工智能大赛 ：视频识别 问答
+# 2018之江杯全球人工智能大赛：视频识别 问答
 ## 问题
 给一组视频，每个视频有若干个问题，对给个问题回答一个答案
 ## 数据集
@@ -42,23 +42,24 @@
 同时，怀疑答案编码存在一些问题，很多二元组也没有回答对
 ## 解决方案
 1. 问题建模。原始问题不能直接处理，需要进行转换。
-    -[x] 转换为n(1000)类候选答案
-        -[x] 转换为视频-问题-单个答案对 ，建模为视频多分类问题
-        -[x] 转换为视频-问题-多个答案对， 建模为视频多标签问题
-        -[x] 转换为图像问题回答
+
+    - [x] 转换为n(1000)类候选答案
+        - [x] 转换为视频-问题-单个答案对 ，建模为视频多分类问题
+        - [x] 转换为视频-问题-多个答案对， 建模为视频多标签问题
+        - [x] 转换为图像问题回答
 2. 迁移学习对这个问题来说非常重要，需要找到一个能迁移到该数据集上的模型
 
-    -[x] [VGG-19 on imagenet](https://keras.io/applications/#vgg19) 图像分类模型， 可标注每一帧的特征
-    -[x] [resnext-101 on kinetics](https://github.com/raven4752/video-classification-3d-cnn-pytorch) 视频分类模型，可标注每64帧的特征
-    -[ ] resnet-101 on imagenet on kinetics 用imagenet预训练的图像分类模型在kinetics数据集上训练的视频分类模型
-    -[x] fast-rcnn 物体识别模型
-    -[ ] 问答模型的句子/答案编码器
-    -[ ] 图像问题回答模型 on VQA v2
+    - [x] [VGG-19 on imagenet](https://keras.io/applications/#vgg19) 图像分类模型， 可标注每一帧的特征
+    - [x] [resnext-101 on kinetics](https://github.com/raven4752/video-classification-3d-cnn-pytorch) 视频分类模型，可标注每64帧的特征
+    - [ ] resnet-101 on imagenet on kinetics 用imagenet预训练的图像分类模型在kinetics数据集上训练的视频分类模型
+    - [x] fast-rcnn 物体识别模型
+    - [ ] 问答模型的句子/答案编码器
+    - [ ] 图像问题回答模型 on VQA v2
 3. 由于数据较少，数据增广可能对结果有着重要的影响
-    -[ ] 视频级别增广
-        -[ ] 全局亮度调整
-        -[ ] 全局旋转
-        -[ ] 全局剪切
+    - [ ] 视频级别增广
+        - [ ] 全局亮度调整
+        - [ ] 全局旋转
+        - [ ] 全局剪切
 4. 考虑到仍然有一些问题需要了解视频整体的特征，一些结合帧级别特征生成视频特征的模型可能有作用。
 ## 参考资料
 1. [图像问题回答训练技巧](https://arxiv.org/abs/1708.02711)
@@ -73,19 +74,19 @@
 2. 观测发现数据集的大多数问题都可以通过观察某一帧回答，与实验结果相违背（再次观察发现有一部分问题属于行为问题）
 3. ~~cv-ensemble+模型改进只提高了两个千分点？？~~ 可能是因为sub instance level averaging 引起的bug
 ## TODO
--[x] 迁移到sacred框架
--[ ] 为mongodb数据库添加加密，用mongodb管理artifacts
--[ ] 添加tensorboard输出
--[x] 模拟云端的性能估计
--[ ] 尝试不同的问题建模
+- [x] 迁移到sacred框架
+- [ ] 为mongodb数据库添加加密，用mongodb管理artifacts
+- [ ] 添加tensorboard输出
+- [x] 模拟云端的性能估计
+- [ ] 尝试不同的问题建模
     - [ ] fine tuning vgg/resnet
     - [ ] seq2seq answer encoding
--[x] 懒惰的资源创建和加载
-    -[x] 按需加载资源
--[ ] 重构项目
-    -[x] 支持用yml格式的配置文件创建实验
-    -[ ] 将training 从main中分离出来
-    -[ ] 添加capture，监视训练过程
-    -[ ] 保存预测结果为(video_id,question,answer)的列表，容易合并
-    -[ ] 划分验证集
-    -[ ] 支持 pytroch/keras 模型
+- [x] 懒惰的资源创建和加载
+    - [x] 按需加载资源
+- [ ] 重构项目
+    - [x] 支持用yml格式的配置文件创建实验
+    - [ ] 将training 从main中分离出来
+    - [ ] 添加capture，监视训练过程
+    - [ ] 保存预测结果为(video_id,question,answer)的列表，容易合并
+    - [ ] 划分验证集
+    - [ ] 支持 pytroch/keras 模型
